@@ -126,6 +126,12 @@ default branch. Set the deploy command to:
 npx wrangler deploy
 ```
 
+Use `wrangler deploy`, not `wrangler versions upload`: only `deploy` can apply the Durable Object
+migration this Worker needs on its first release.
+
+Name the Workers Builds project to match the `name` field in `wrangler.toml`, or update that field
+to match the project, so Wrangler does not override it at build time.
+
 ### 2. Add the encryption key
 
 Under **Settings → Variables and Secrets**, add:
@@ -386,8 +392,14 @@ carries the KV namespace binding and the Access variables, a Git-connected build
 variables at all — set the deploy command to `npx wrangler deploy` and add
 `CREDENTIAL_ENCRYPTION_KEY` under **Settings → Variables and Secrets**.
 
-To verify a change before it goes live, set the deploy command to `npx wrangler versions upload`.
-That uploads a version without promoting it; switch back to `npx wrangler deploy` to release.
+The deploy command must be `npx wrangler deploy`. `wrangler versions upload` cannot apply
+Durable Object migrations, and this Worker declares one to create the `MyMCP` class, so an
+upload-only first deploy fails with "This Worker has a pending Durable Object migration".
+Once that migration has been applied by a real deploy, `npx wrangler versions upload` is usable
+for staging later changes without promoting them.
+
+The Worker name in `wrangler.toml` must match the Workers Builds project name, otherwise Wrangler
+overrides it during the build and opens a pull request proposing the rename.
 
 `npm run cloudflare:deploy` and `npm run cloudflare:upload` remain as aliases for those two
 commands, so a deploy command configured before the generator was removed keeps working.
