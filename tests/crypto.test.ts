@@ -13,9 +13,21 @@ test("AES-GCM JSON values round-trip", async () => {
 test("invalid encryption keys are rejected", async () => {
 	await assert.rejects(
 		encrypt(new TextEncoder().encode("secret"), Buffer.alloc(31).toString("base64")),
-		/base64-encoded 32-byte key/,
+		/must decode to 32 bytes, got 31/,
 	);
 	await assert.rejects(encrypt(new TextEncoder().encode("secret"), "not-base64"), /32-byte key/);
+});
+
+test("an unbound key is reported as missing, not as malformed", async () => {
+	// A build secret that never became a runtime secret arrives as an empty
+	// binding. That needs a different fix from a mistyped key, so it must not
+	// share the "malformed" message.
+	for (const absent of ["", undefined as unknown as string]) {
+		await assert.rejects(
+			encrypt(new TextEncoder().encode("secret"), absent),
+			/is not bound to this Worker at runtime/,
+		);
+	}
 });
 
 test("short, tampered, and wrong-key ciphertext is rejected", async () => {

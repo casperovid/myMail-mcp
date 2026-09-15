@@ -1,4 +1,13 @@
 function decodeKey(encryptionKey: string): Uint8Array {
+	// An absent binding and a malformed value used to raise the same error,
+	// which made a missing runtime secret look like a bad key. They have
+	// different fixes, so they get different messages.
+	if (!encryptionKey)
+		throw new Error(
+			"CREDENTIAL_ENCRYPTION_KEY is not bound to this Worker at runtime. A build " +
+				"secret is not a runtime secret: deploy with `npm run deploy`, which uploads it " +
+				"via `wrangler deploy --secrets-file`.",
+		);
 	let raw: Uint8Array;
 	try {
 		raw = Uint8Array.from(atob(encryptionKey), (character) => character.charCodeAt(0));
@@ -6,7 +15,7 @@ function decodeKey(encryptionKey: string): Uint8Array {
 		throw new Error("CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
 	}
 	if (raw.byteLength !== 32)
-		throw new Error("CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
+		throw new Error(`CREDENTIAL_ENCRYPTION_KEY must decode to 32 bytes, got ${raw.byteLength}`);
 	return raw;
 }
 
