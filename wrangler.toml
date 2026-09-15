@@ -28,11 +28,12 @@ id = "46051647e7de4485876427a3570780ab"
 # access is gated by the Cloudflare Access policy and by CREDENTIAL_ENCRYPTION_KEY,
 # which is a dashboard secret and never appears in this file.
 #
-# Fill TEAM_DOMAIN and POLICY_AUD in after creating the Access application. The
-# Worker fails closed while the placeholders are in place.
+# TEAM_DOMAIN must carry the https:// scheme and no trailing slash: the Worker
+# uses it verbatim as the expected JWT issuer and as the base for the Access
+# certs endpoint.
 [vars]
-TEAM_DOMAIN = "https://your-team.cloudflareaccess.com"
-POLICY_AUD = "replace-with-your-access-application-aud-tag"
+TEAM_DOMAIN = "https://myjacobsnetwork.cloudflareaccess.com"
+POLICY_AUD = "fea464790cfbde4e9972b9f2aafbea4186ba715f48c59d5062acd9afa1028b57"
 
 # Outlook is opt-in and unused for password-authenticated providers
 # (Gmail, iCloud, Yahoo, custom IMAP). Leave these alone unless you add an
