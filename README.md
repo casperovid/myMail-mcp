@@ -389,6 +389,9 @@ variables at all — set the deploy command to `npx wrangler deploy` and add
 To verify a change before it goes live, set the deploy command to `npx wrangler versions upload`.
 That uploads a version without promoting it; switch back to `npx wrangler deploy` to release.
 
+`npm run cloudflare:deploy` and `npm run cloudflare:upload` remain as aliases for those two
+commands, so a deploy command configured before the generator was removed keeps working.
+
 ## Dependency updates
 
 Dependabot checks npm packages and GitHub Actions weekly. Minor and patch updates are grouped into

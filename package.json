@@ -24,6 +24,8 @@
 	"scripts": {
 		"deploy": "wrangler deploy",
 		"upload": "wrangler versions upload",
+		"cloudflare:deploy": "wrangler deploy",
+		"cloudflare:upload": "wrangler versions upload",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"format": "oxfmt --write .",
