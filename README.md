@@ -127,7 +127,7 @@ Wrangler install and no build variables. Everything Wrangler needs is committed 
 default branch. Set the deploy command to:
 
 ```
-npx wrangler deploy
+npm run deploy
 ```
 
 Use `wrangler deploy`, not `wrangler versions upload`: only `deploy` can apply the Durable Object
@@ -138,15 +138,21 @@ to match the project, so Wrangler does not override it at build time.
 
 ### 2. Add the encryption key
 
-Under **Settings → Variables and Secrets**, add:
+Under **Settings → Build → Variables and secrets**, add:
 
 | Name                        | Type   | Value                            |
 | --------------------------- | ------ | -------------------------------- |
 | `CREDENTIAL_ENCRYPTION_KEY` | Secret | A base64-encoded 32-byte AES key |
 
-Secrets survive redeploys, so this is set once. Everything else — the KV namespace ID, the Access
-team domain and audience — lives in `wrangler.toml`, because `wrangler deploy` treats that file as
-the source of truth for `[vars]` and would otherwise overwrite dashboard values on every deploy.
+A Worker whose configuration is managed by `wrangler.toml` does not expose a separate runtime
+Variables and Secrets card in the dashboard, only the build section. Build secrets reach the deploy
+command's environment but are never bound to the running Worker, so the deploy script
+(`scripts/deploy.mjs`) promotes this one to a runtime secret with
+`wrangler deploy --secrets-file`, writing it to a private temporary file that is deleted when the
+deploy finishes. Secrets absent from that file are preserved from the previous version.
+
+Everything else — the KV namespace ID, the Access team domain and audience — lives in
+`wrangler.toml`, because `wrangler deploy` treats that file as the source of truth for `[vars]`.
 
 ### 3. Add the DNS record for the hub hostname
 
