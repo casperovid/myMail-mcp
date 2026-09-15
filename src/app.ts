@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { createRemoteJWKSet, decodeJwt, jwtVerify } from "jose";
+import { BASE_PATH, withBasePath } from "./base-path";
 import { openJson, sealJson } from "./crypto";
 import { AccountStore } from "./mail/account-store";
 import { MailService } from "./mail/mail-service";
@@ -10,7 +11,10 @@ import {
 	type OutlookOAuthState,
 } from "./outlook-oauth";
 
-const app = new Hono<{ Bindings: MailEnv }>();
+// strict: false so the mount point resolves with or without a trailing slash.
+// Under a base path Hono matches "/myMail" but not "/myMail/", and every
+// redirect this app emits for the index is of the "/myMail/?status=..." shape.
+const app = new Hono<{ Bindings: MailEnv }>({ strict: false }).basePath(BASE_PATH);
 const OUTLOOK_SCOPES =
 	"openid profile email offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send";
 const microsoftJwks = createRemoteJWKSet(
@@ -87,7 +91,9 @@ app.post("/accounts", async (c) => {
 	try {
 		await accountStore(c.env).add(account);
 		return c.redirect(
-			testResult.smtpConfigured ? "/?status=added_tested" : "/?status=added_tested_imap_only",
+			testResult.smtpConfigured
+				? withBasePath("/?status=added_tested")
+				: withBasePath("/?status=added_tested_imap_only"),
 			303,
 		);
 	} catch (error) {
@@ -127,7 +133,7 @@ app.post("/accounts/pending/retry", async (c) => {
 			: pending.mode === "add"
 				? "added_tested_imap_only"
 				: "updated_tested_imap_only";
-		return c.redirect(`/?status=${status}`, 303);
+		return c.redirect(withBasePath(`/?status=${status}`), 303);
 	} catch (error) {
 		return pendingAccountError(c, error);
 	}
@@ -161,7 +167,7 @@ app.post("/accounts/pending/edit-test", async (c) => {
 			: pending.mode === "add"
 				? "added_tested_imap_only"
 				: "updated_tested_imap_only";
-		return c.redirect(`/?status=${status}`, 303);
+		return c.redirect(withBasePath(`/?status=${status}`), 303);
 	} catch (error) {
 		return pendingAccountError(c, error);
 	}
@@ -174,7 +180,9 @@ app.post("/accounts/pending/save", async (c) => {
 		const pending = await pendingAccountChange(c.env, await c.req.formData());
 		await persistAccountChange(c.env, pending);
 		return c.redirect(
-			pending.mode === "add" ? "/?status=added_untested" : "/?status=updated_untested",
+			pending.mode === "add"
+				? withBasePath("/?status=added_untested")
+				: withBasePath("/?status=updated_untested"),
 			303,
 		);
 	} catch (error) {
@@ -184,7 +192,7 @@ app.post("/accounts/pending/save", async (c) => {
 
 app.post("/accounts/pending/cancel", async (c) => {
 	if (!isTrustedFormSubmission(c.req.raw)) return c.text("Forbidden", 403);
-	return c.redirect("/", 303);
+	return c.redirect(withBasePath("/"), 303);
 });
 
 app.post("/accounts/:id/update", async (c) => {
@@ -227,8 +235,8 @@ app.post("/accounts/:id/update", async (c) => {
 		await store.update(account);
 		return c.redirect(
 			testResult.smtpConfigured
-				? "/?status=updated_tested"
-				: "/?status=updated_tested_imap_only",
+				? withBasePath("/?status=updated_tested")
+				: withBasePath("/?status=updated_tested_imap_only"),
 			303,
 		);
 	} catch (error) {
@@ -249,7 +257,7 @@ app.post("/accounts/:id/test", async (c) => {
 			"Set-Cookie",
 			connectionTestCookie(c.req.url.startsWith("https://"), result.smtpConfigured),
 		);
-		return c.redirect("/", 303);
+		return c.redirect(withBasePath("/"), 303);
 	} catch (error) {
 		const accounts = await accountStore(c.env)
 			.list()
@@ -271,7 +279,7 @@ app.post("/accounts/:id/remove", async (c) => {
 
 	try {
 		await accountStore(c.env).remove(c.req.param("id"));
-		return c.redirect("/?status=removed", 303);
+		return c.redirect(withBasePath("/?status=removed"), 303);
 	} catch (error) {
 		const accounts = await accountStore(c.env)
 			.list()
@@ -390,7 +398,7 @@ app.get("/oauth/outlook/callback", async (c) => {
 			},
 		});
 		c.header("Set-Cookie", clearOauthCookie(c.req.url.startsWith("https://")));
-		return c.redirect("/?status=outlook_connected", 303);
+		return c.redirect(withBasePath("/?status=outlook_connected"), 303);
 	} catch (error) {
 		c.header("Set-Cookie", clearOauthCookie(c.req.url.startsWith("https://")));
 		const accounts = await accountStore(c.env)
@@ -557,10 +565,10 @@ function managementPage(
 							<div class="account-identity"><span class="account-avatar" aria-hidden="true">${escapeHtml(account.name.charAt(0).toUpperCase())}</span><div><strong>${escapeHtml(account.name)}</strong><span>${escapeHtml(account.email)}</span></div></div>
 							<div class="account-actions">
 								<a class="secondary action-link" href="/?edit=${encodeURIComponent(account.id)}">Edit</a>
-								<form method="post" action="/accounts/${encodeURIComponent(account.id)}/test">
+								<form method="post" action="${withBasePath(`/accounts/${encodeURIComponent(account.id)}/test`)}">
 									<button class="secondary" type="submit">Test connection</button>
 								</form>
-								<form method="post" action="/accounts/${encodeURIComponent(account.id)}/remove" onsubmit="return confirm('Remove this account?')">
+								<form method="post" action="${withBasePath(`/accounts/${encodeURIComponent(account.id)}/remove`)}" onsubmit="return confirm('Remove this account?')">
 									<button class="danger" type="submit">Remove</button>
 								</form>
 							</div>
@@ -594,10 +602,10 @@ function managementPage(
 			<p>The account has not been saved. Check the error and choose what to do next.</p>
 			<div class="test-error" role="alert">${escapeHtml(accountTestFailure.message)}</div>
 			<div class="test-actions">
-				<form method="post" action="/accounts/pending/retry"><input type="hidden" name="pending" value="${escapeHtml(accountTestFailure.pending)}"><button type="submit">Run test again</button></form>
+				<form method="post" action="${withBasePath("/accounts/pending/retry")}"><input type="hidden" name="pending" value="${escapeHtml(accountTestFailure.pending)}"><button type="submit">Run test again</button></form>
 				<button class="secondary" id="edit-failed-account" type="button">Edit details</button>
-				<form method="post" action="/accounts/pending/save"><input type="hidden" name="pending" value="${escapeHtml(accountTestFailure.pending)}"><button class="secondary" type="submit">Save anyway</button></form>
-				<form method="post" action="/accounts/pending/cancel"><button class="plain-button" type="submit">Cancel</button></form>
+				<form method="post" action="${withBasePath("/accounts/pending/save")}"><input type="hidden" name="pending" value="${escapeHtml(accountTestFailure.pending)}"><button class="secondary" type="submit">Save anyway</button></form>
+				<form method="post" action="${withBasePath("/accounts/pending/cancel")}"><button class="plain-button" type="submit">Cancel</button></form>
 			</div>
 		</section>
 	</dialog>`
@@ -748,7 +756,7 @@ function accountEditor(
 	const html = `<dialog class="account-dialog" id="account-editor" aria-labelledby="account-editor-heading">
 	<section class="dialog-card">
 		<div class="dialog-heading"><div><h2 id="account-editor-heading">${pendingChange ? "Edit account details" : editing ? "Edit account" : "Add an account"}</h2><p>${pendingChange ? "The credential from the failed test is preserved securely." : editing ? "Update the mailbox connection settings." : "Choose a provider and enter the account details."}</p></div><button class="icon-button" type="button" data-dialog-close aria-label="Close">×</button></div>
-		<form method="post" action="${pendingChange ? "/accounts/pending/edit-test" : editing ? `/accounts/${encodeURIComponent(account!.id)}/update` : "/accounts"}" autocomplete="off" id="account-form">
+		<form method="post" action="${withBasePath(pendingChange ? "/accounts/pending/edit-test" : editing ? `/accounts/${encodeURIComponent(account!.id)}/update` : "/accounts")}" autocomplete="off" id="account-form">
 			${pendingToken ? `<input type="hidden" name="pending" value="${escapeHtml(pendingToken)}">` : ""}
 			${
 				editing
@@ -796,7 +804,7 @@ function accountEditor(
 			</div>
 			<div class="form-actions">
 				<button class="submit" id="account-submit" type="submit">${existingAccount ? "Test and save changes" : "Test and save account"}</button>
-				${editing ? '<a class="cancel-link" href="/">Cancel</a>' : '<button class="secondary" type="button" data-dialog-close>Cancel</button>'}
+				${editing ? `<a class="cancel-link" href="${withBasePath("/")}">Cancel</a>` : '<button class="secondary" type="button" data-dialog-close>Cancel</button>'}
 			</div>
 			<p class="help" id="account-help">${pendingChange ? "Change the connection details and test again. The stored pending credential is never returned to the page." : editing ? "Changing the email address also changes the username used for IMAP and SMTP authentication." : "Use an app-specific password for Gmail, iCloud, or Yahoo. Passwords and tokens are never displayed after saving."}</p>
 			</div>
@@ -829,7 +837,7 @@ function accountEditor(
 				const manualFields = byId("manual-account-fields");
 				const submit = byId("account-submit");
 				manualFields.hidden = outlook;
-				form.action = outlook ? "/oauth/outlook/start" : "/accounts";
+				form.action = outlook ? "${withBasePath("/oauth/outlook/start")}" : "${withBasePath("/accounts")}";
 				submit.textContent = outlook ? "Continue with Microsoft" : "Test and save account";
 				submit.disabled = outlook && !outlookOAuthConfigured;
 				byId("account-help").textContent = outlook
@@ -875,7 +883,7 @@ function accountEditor(
 		}
 		smtpEnabled.addEventListener("change", updateSmtp);
 		updateSmtp();
-		const closeAccountDialog = () => ${editing ? 'window.location.assign("/")' : "accountDialog.close()"};
+		const closeAccountDialog = () => ${editing ? `window.location.assign("${withBasePath("/")}")` : "accountDialog.close()"};
 		addAccountButton.addEventListener("click", () => {
 			if (!accountDialog.open) accountDialog.showModal();
 		});
@@ -919,23 +927,23 @@ function outlookConfig(env: MailEnv): {
 }
 
 function outlookRedirectUri(request: Request): string {
-	return `${new URL(request.url).origin}/oauth/outlook/callback`;
+	return `${new URL(request.url).origin}${withBasePath("/oauth/outlook/callback")}`;
 }
 
 function oauthCookie(value: string, secure: boolean): string {
-	return `outlook_oauth=${value}; Path=/oauth/outlook/callback; HttpOnly; SameSite=Lax; Max-Age=600${secure ? "; Secure" : ""}`;
+	return `outlook_oauth=${value}; Path=${withBasePath("/oauth/outlook/callback")}; HttpOnly; SameSite=Lax; Max-Age=600${secure ? "; Secure" : ""}`;
 }
 
 function clearOauthCookie(secure: boolean): string {
-	return `outlook_oauth=; Path=/oauth/outlook/callback; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`;
+	return `outlook_oauth=; Path=${withBasePath("/oauth/outlook/callback")}; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`;
 }
 
 function connectionTestCookie(secure: boolean, smtpConfigured: boolean): string {
-	return `connection_test=${smtpConfigured ? "connection_ok" : "connection_imap_only"}; Path=/; HttpOnly; SameSite=Strict; Max-Age=60${secure ? "; Secure" : ""}`;
+	return `connection_test=${smtpConfigured ? "connection_ok" : "connection_imap_only"}; Path=${withBasePath("/")}; HttpOnly; SameSite=Strict; Max-Age=60${secure ? "; Secure" : ""}`;
 }
 
 function clearConnectionTestCookie(secure: boolean): string {
-	return `connection_test=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure ? "; Secure" : ""}`;
+	return `connection_test=; Path=${withBasePath("/")}; HttpOnly; SameSite=Strict; Max-Age=0${secure ? "; Secure" : ""}`;
 }
 
 function cookieValue(request: Request, name: string): string | undefined {

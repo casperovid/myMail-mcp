@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { McpAgent } from "agents/mcp";
+
+import { isMcpPath, withBasePath } from "./base-path";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { z } from "zod";
 import { accessRejection } from "./access";
@@ -1366,7 +1368,7 @@ async function verifyAccessJwt(token: string, env: MailEnv): Promise<AccessIdent
 	return { email: payload.email, sub: payload.sub };
 }
 
-const mcpHandler = MyMCP.serve("/mcp");
+const mcpHandler = MyMCP.serve(withBasePath("/mcp"));
 
 export default {
 	async fetch(request: Request, env: MailEnv, ctx: ExecutionContext): Promise<Response> {
@@ -1376,7 +1378,7 @@ export default {
 		if (rejection) return rejection;
 
 		const pathname = new URL(request.url).pathname;
-		return pathname === "/mcp" || pathname.startsWith("/mcp/")
+		return isMcpPath(pathname)
 			? mcpHandler.fetch(request, env, ctx)
 			: app.fetch(request, env, ctx);
 	},

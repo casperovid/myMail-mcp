@@ -11,6 +11,15 @@ new_sqlite_classes = ["MyMCP"]
 name = "MCP_OBJECT"
 class_name = "MyMCP"
 
+# Mounted as one server on a shared MCP hub hostname. A pattern route (rather
+# than custom_domain) leaves the rest of mcp.timothyjacobs.net free for other
+# Workers at their own paths. Pattern routes require an existing proxied DNS
+# record for the hostname: an AAAA record for `mcp` pointing at 100:: is the
+# standard originless placeholder.
+[[routes]]
+pattern = "mcp.timothyjacobs.net/myMail*"
+zone_name = "timothyjacobs.net"
+
 [[kv_namespaces]]
 binding = "EMAIL_KV"
 id = "46051647e7de4485876427a3570780ab"

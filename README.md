@@ -97,7 +97,11 @@ npm install
 npm run dev
 ```
 
-Connect an MCP client to `http://localhost:8787/mcp`.
+Connect an MCP client to `http://localhost:8787/myMail/mcp`.
+
+Because `wrangler.toml` declares a route, `wrangler dev` simulates the route hostname rather than
+localhost, and the `ACCESS_LOCAL_DEV` bypass (which requires a loopback hostname) will not engage.
+Run `wrangler dev --host localhost` to develop against the bypass.
 
 `ACCESS_LOCAL_DEV` bypasses Access verification only when the request hostname is `localhost`,
 `127.0.0.1`, or `::1`. Never configure it as a production Worker variable or secret.
@@ -144,9 +148,26 @@ Secrets survive redeploys, so this is set once. Everything else — the KV names
 team domain and audience — lives in `wrangler.toml`, because `wrangler deploy` treats that file as
 the source of truth for `[vars]` and would otherwise overwrite dashboard values on every deploy.
 
-### 3. First deploy
+### 3. Add the DNS record for the hub hostname
 
-Trigger a build. Note the Worker's `*.workers.dev` hostname.
+This Worker is attached with a _route_ (`mcp.timothyjacobs.net/myMail*`) rather than a custom
+domain, so that other MCP servers can take their own paths on the same hostname later. Routes do
+not create DNS records, and without one the hostname never resolves and requests never reach the
+Worker.
+
+In **DNS → Records** on `timothyjacobs.net`, add:
+
+| Type | Name  | Content | Proxy status |
+| ---- | ----- | ------- | ------------ |
+| AAAA | `mcp` | `100::` | Proxied      |
+
+`100::` is Cloudflare's reserved placeholder for originless setups. Because the record is proxied,
+requests never reach that address — the route intercepts them first.
+
+### 4. First deploy
+
+Trigger a build. The MCP endpoint is then `https://mcp.timothyjacobs.net/myMail/mcp` and the admin
+UI is at `https://mcp.timothyjacobs.net/myMail`.
 
 Until Access is configured the Worker fails closed — the placeholder issuer and audience reject
 every request. That is expected at this stage.
@@ -178,10 +199,18 @@ Production authentication is handled by a Cloudflare Access self-hosted applicat
 Managed OAuth. The Worker also verifies every `Cf-Access-Jwt-Assertion` signature, issuer, and
 audience before routing a request.
 
-1. Deploy the Worker once to obtain its `*.workers.dev` hostname. Until Access is configured,
-   the placeholder issuer and audience make the Worker fail closed.
+1. Deploy the Worker and add the hub DNS record first. Until Access is configured, the placeholder
+   issuer and audience make the Worker fail closed.
 2. In **Zero Trust → Access controls → Applications**, create a **Self-hosted and private**
-   application for the Worker hostname.
+   application scoped to the path this Worker occupies, not the whole hostname:
+
+    | Subdomain | Domain              | Path     |
+    | --------- | ------------------- | -------- |
+    | `mcp`     | `timothyjacobs.net` | `myMail` |
+
+    Scoping to the path keeps the rest of `mcp.timothyjacobs.net` free for other MCP servers, each
+    with its own Access application and policy.
+
 3. Add an Allow policy restricted to your email or identity group. This server uses one shared
    encrypted account store, so do not authorize unrelated users.
 4. Configure one-time PIN or an identity provider. Enable MFA at the identity provider or in
@@ -222,7 +251,7 @@ mailbox owner signs in and grants the app access when **Outlook** is selected in
    will be started. The path and port must match exactly:
 
     ```text
-    https://<worker>.<subdomain>.workers.dev/oauth/outlook/callback
+    https://mcp.timothyjacobs.net/myMail/oauth/outlook/callback
     http://localhost:8787/oauth/outlook/callback
     ```
 
@@ -309,9 +338,9 @@ Deploy after updating the Access variables:
 npm run deploy
 ```
 
-The production MCP endpoint is `https://<worker>.<subdomain>.workers.dev/mcp`.
+The production MCP endpoint is `https://mcp.timothyjacobs.net/myMail/mcp`.
 
-Open `https://<worker>.<subdomain>.workers.dev/` to manage email accounts through the
+Open `https://mcp.timothyjacobs.net/myMail` to manage email accounts through the
 Access-protected web interface. Credentials submitted there go directly from the browser to the
 Worker and do not pass through an MCP client or language model.
 
@@ -320,13 +349,13 @@ Worker and do not pass through an MCP client or language model.
 After deploying the Worker and configuring Cloudflare Access, add its MCP endpoint to ChatGPT:
 
 ```text
-MCP server URL: https://<worker>.<subdomain>.workers.dev/mcp
+MCP server URL: https://mcp.timothyjacobs.net/myMail/mcp
 ```
 
 1. Open **Settings → Security and login** and turn on **Developer mode**.
 2. Open **Settings → Plugins** and select **Add custom plugin**.
 3. Enter `Email MCP Server` as the name and
-   `https://<worker>.<subdomain>.workers.dev/mcp` as the server URL.
+   `https://mcp.timothyjacobs.net/myMail/mcp` as the server URL.
 4. Select **OAuth** if prompted, then select **Scan Tools** and complete the Cloudflare Access
    sign-in.
 5. Select **Create**, then choose the plugin in a new chat.
@@ -337,12 +366,12 @@ The Worker sits behind Cloudflare Access, which advertises OAuth to MCP clients.
 surfaces complete the Access sign-in in a browser and store the resulting token themselves — no
 API key or bearer header to paste, and no credential ever reaches the model.
 
-Endpoint: `https://<worker>.<subdomain>.workers.dev/mcp`
+Endpoint: `https://mcp.timothyjacobs.net/myMail/mcp`
 
 ### Claude Cowork / claude.ai
 
 1. Open **Settings → Connectors** and select **Add custom connector**.
-2. Name it `Email` and enter `https://<worker>.<subdomain>.workers.dev/mcp` as the URL.
+2. Name it `Email` and enter `https://mcp.timothyjacobs.net/myMail/mcp` as the URL.
 3. Select **Add**, then **Connect** on the new connector.
 4. Complete the Cloudflare Access sign-in in the popup. The connector turns green when the tool
    list loads.
@@ -350,7 +379,7 @@ Endpoint: `https://<worker>.<subdomain>.workers.dev/mcp`
 ### Claude Code
 
 ```bash
-claude mcp add --transport http email https://<worker>.<subdomain>.workers.dev/mcp
+claude mcp add --transport http email https://mcp.timothyjacobs.net/myMail/mcp
 ```
 
 Then run `/mcp` inside Claude Code and choose **Authenticate** for the `email` server. A browser
@@ -363,7 +392,7 @@ Verify with `/mcp` — the server should report as connected with its tools list
 
 Neither provider accepts your normal account password over IMAP, and neither offers third-party
 OAuth for mail. Both require a provider-issued app password, which you paste into the Worker's
-own Access-protected web UI at `https://<worker>.<subdomain>.workers.dev/` — not into a Claude
+own Access-protected web UI at `https://mcp.timothyjacobs.net/myMail` — not into a Claude
 client, and not into this repository.
 
 **Yahoo** — sign in, then **Account Info → Account Security → Generate app password**. Name it
