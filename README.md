@@ -25,6 +25,7 @@ The Worker connects directly to IMAP and SMTP using Cloudflare outbound TCP sock
 - [Public source, private deployments](#public-source-private-deployments)
 - [Tools](#tools)
 - [Local setup](#local-setup)
+- [Deploy from the dashboard (no terminal)](#deploy-from-the-dashboard-no-terminal)
 - [Cloudflare Access](#cloudflare-access)
 - [Microsoft Entra app registration for Outlook](#microsoft-entra-app-registration-for-outlook)
 - [Production secret and deployment](#production-secret-and-deployment)
@@ -109,6 +110,69 @@ local/deployed events with `npx wrangler tail`.
 
 In VS Code, open **Run and Debug**, select **Email MCP: Local server**, and click Run (or
 press F5). Wrangler loads the same `.dev.vars` file automatically in the integrated terminal.
+
+## Deploy from the dashboard (no terminal)
+
+The whole deployment works from the Cloudflare dashboard using Workers Builds, with no local
+Wrangler install. The build script generates the private `wrangler.generated.json` at build time
+from a build variable, so no namespace ID or Access value is ever committed.
+
+### 1. Create the KV namespace
+
+**Storage & Databases → KV → Create a namespace**. Any title works. Copy the 32-character
+namespace ID.
+
+### 2. Create the Worker from this repository
+
+**Workers & Pages → Create → Workers → Import a repository**, then select this repository and its
+default branch. Set the deploy command to `npm run cloudflare:upload` for the first build — this
+uploads a version without promoting it, so a misconfiguration cannot take the Worker live.
+
+### 3. Add build and runtime values
+
+Under **Settings → Build → Variables and Secrets**, add the build variable (runtime variables are
+not visible to build commands):
+
+| Name                    | Type      | Value                        |
+| ----------------------- | --------- | ---------------------------- |
+| `EMAIL_KV_NAMESPACE_ID` | Encrypted | The namespace ID from step 1 |
+
+Under **Settings → Variables and Secrets**, add the runtime secret:
+
+| Name                        | Type   | Value                            |
+| --------------------------- | ------ | -------------------------------- |
+| `CREDENTIAL_ENCRYPTION_KEY` | Secret | A base64-encoded 32-byte AES key |
+
+Leave `OUTLOOK_CLIENT_ID`, `OUTLOOK_TENANT` and `OUTLOOK_CLIENT_SECRET` unset unless you are
+connecting an Outlook mailbox. With no Entra client ID configured, the generated config does not
+require the Outlook secret.
+
+### 4. First deploy
+
+Trigger a build. Once it succeeds, change the deploy command to `npm run cloudflare:deploy` and
+redeploy to promote it. Note the Worker's `*.workers.dev` hostname.
+
+Until Access is configured the Worker fails closed — the placeholder issuer and audience reject
+every request. That is expected at this stage.
+
+### 5. Configure Access, then redeploy
+
+Follow [Cloudflare Access](#cloudflare-access) to create the self-hosted application, enable
+Managed OAuth, and obtain the AUD tag and team domain. Add both as **plaintext** runtime variables
+under **Settings → Variables and Secrets**:
+
+| Name          | Type      | Value                                      |
+| ------------- | --------- | ------------------------------------------ |
+| `TEAM_DOMAIN` | Plaintext | `https://<your-team>.cloudflareaccess.com` |
+| `POLICY_AUD`  | Plaintext | The Access application AUD tag             |
+
+The generated config sets `keep_vars: true`, so dashboard variables survive redeploys. Redeploy
+once more to pick them up.
+
+### 6. Add mailboxes
+
+Open the Worker's root URL, sign in through Access, and add each account with its provider button.
+See [Yahoo and iCloud app passwords](#yahoo-and-icloud-app-passwords).
 
 ## Cloudflare Access
 
