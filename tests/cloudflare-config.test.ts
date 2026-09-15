@@ -37,10 +37,7 @@ test("Cloudflare build config requires the Outlook secret only when Outlook is c
 });
 
 test("Cloudflare build config rejects missing or malformed KV namespace IDs", () => {
-	assert.throws(
-		() => buildCloudflareConfig({}),
-		/must be configured as a Cloudflare build secret/,
-	);
+	assert.throws(() => buildCloudflareConfig({}), /Settings -> Build -> Variables and Secrets/);
 	assert.throws(
 		() => buildCloudflareConfig({ EMAIL_KV_NAMESPACE_ID: "replace-with-an-id" }),
 		/32-character hexadecimal namespace ID/,

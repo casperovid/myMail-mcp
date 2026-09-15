@@ -5,7 +5,12 @@ export const generatedConfigPath = "wrangler.generated.json";
 export function buildCloudflareConfig(environment = process.env) {
 	const kvNamespaceId = environment.EMAIL_KV_NAMESPACE_ID?.trim();
 	if (!kvNamespaceId)
-		throw new Error("EMAIL_KV_NAMESPACE_ID must be configured as a Cloudflare build secret");
+		throw new Error(
+			"EMAIL_KV_NAMESPACE_ID is not set. Add it under Settings -> Build -> Variables and " +
+				"Secrets, which is a different section from the runtime Settings -> Variables and " +
+				"Secrets. Deploy commands only receive build variables, so a namespace ID stored as " +
+				"a runtime variable is invisible here.",
+		);
 	if (!/^[a-f0-9]{32}$/i.test(kvNamespaceId))
 		throw new Error("EMAIL_KV_NAMESPACE_ID must be a 32-character hexadecimal namespace ID");
 
