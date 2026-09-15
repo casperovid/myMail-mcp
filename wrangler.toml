@@ -13,13 +13,23 @@ class_name = "MyMCP"
 
 [[kv_namespaces]]
 binding = "EMAIL_KV"
-id = "replace-with-your-kv-namespace-id"
+id = "46051647e7de4485876427a3570780ab"
 
+# Non-secret deployment coordinates. These are identifiers, not credentials:
+# access is gated by the Cloudflare Access policy and by CREDENTIAL_ENCRYPTION_KEY,
+# which is a dashboard secret and never appears in this file.
+#
+# Fill TEAM_DOMAIN and POLICY_AUD in after creating the Access application. The
+# Worker fails closed while the placeholders are in place.
 [vars]
 TEAM_DOMAIN = "https://your-team.cloudflareaccess.com"
 POLICY_AUD = "replace-with-your-access-application-aud-tag"
+
+# Outlook is opt-in and unused for password-authenticated providers
+# (Gmail, iCloud, Yahoo, custom IMAP). Leave these alone unless you add an
+# Outlook mailbox, which also needs the OUTLOOK_CLIENT_SECRET dashboard secret.
 OUTLOOK_TENANT = "consumers"
-OUTLOOK_CLIENT_ID = "00000000-0000-0000-0000-000000000000"
+OUTLOOK_CLIENT_ID = ""
 
 [observability]
 enabled = true

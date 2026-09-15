@@ -114,62 +114,54 @@ press F5). Wrangler loads the same `.dev.vars` file automatically in the integra
 ## Deploy from the dashboard (no terminal)
 
 The whole deployment works from the Cloudflare dashboard using Workers Builds, with no local
-Wrangler install. The build script generates the private `wrangler.generated.json` at build time
-from a build variable, so no namespace ID or Access value is ever committed.
+Wrangler install and no build variables. Everything Wrangler needs is committed in
+`wrangler.toml`; the only thing set in the dashboard is the one real secret.
 
-### 1. Create the KV namespace
-
-**Storage & Databases → KV → Create a namespace**. Any title works. Copy the 32-character
-namespace ID.
-
-### 2. Create the Worker from this repository
+### 1. Create the Worker from this repository
 
 **Workers & Pages → Create → Workers → Import a repository**, then select this repository and its
-default branch. Set the deploy command to `npm run cloudflare:upload` for the first build — this
-uploads a version without promoting it, so a misconfiguration cannot take the Worker live.
+default branch. Set the deploy command to:
 
-### 3. Add build and runtime values
+```
+npx wrangler deploy
+```
 
-Under **Settings → Build → Variables and Secrets**, add the build variable (runtime variables are
-not visible to build commands):
+### 2. Add the encryption key
 
-| Name                    | Type      | Value                        |
-| ----------------------- | --------- | ---------------------------- |
-| `EMAIL_KV_NAMESPACE_ID` | Encrypted | The namespace ID from step 1 |
-
-Under **Settings → Variables and Secrets**, add the runtime secret:
+Under **Settings → Variables and Secrets**, add:
 
 | Name                        | Type   | Value                            |
 | --------------------------- | ------ | -------------------------------- |
 | `CREDENTIAL_ENCRYPTION_KEY` | Secret | A base64-encoded 32-byte AES key |
 
-Leave `OUTLOOK_CLIENT_ID`, `OUTLOOK_TENANT` and `OUTLOOK_CLIENT_SECRET` unset unless you are
-connecting an Outlook mailbox. With no Entra client ID configured, the generated config does not
-require the Outlook secret.
+Secrets survive redeploys, so this is set once. Everything else — the KV namespace ID, the Access
+team domain and audience — lives in `wrangler.toml`, because `wrangler deploy` treats that file as
+the source of truth for `[vars]` and would otherwise overwrite dashboard values on every deploy.
 
-### 4. First deploy
+### 3. First deploy
 
-Trigger a build. Once it succeeds, change the deploy command to `npm run cloudflare:deploy` and
-redeploy to promote it. Note the Worker's `*.workers.dev` hostname.
+Trigger a build. Note the Worker's `*.workers.dev` hostname.
 
 Until Access is configured the Worker fails closed — the placeholder issuer and audience reject
 every request. That is expected at this stage.
 
-### 5. Configure Access, then redeploy
+### 4. Configure Access, then commit the real values
 
 Follow [Cloudflare Access](#cloudflare-access) to create the self-hosted application, enable
-Managed OAuth, and obtain the AUD tag and team domain. Add both as **plaintext** runtime variables
-under **Settings → Variables and Secrets**:
+Managed OAuth, and obtain the AUD tag and team domain. Edit `wrangler.toml` — directly on
+github.com is fine — replacing both placeholders:
 
-| Name          | Type      | Value                                      |
-| ------------- | --------- | ------------------------------------------ |
-| `TEAM_DOMAIN` | Plaintext | `https://<your-team>.cloudflareaccess.com` |
-| `POLICY_AUD`  | Plaintext | The Access application AUD tag             |
+```toml
+[vars]
+TEAM_DOMAIN = "https://<your-team>.cloudflareaccess.com"
+POLICY_AUD = "<your-access-application-aud-tag>"
+```
 
-The generated config sets `keep_vars: true`, so dashboard variables survive redeploys. Redeploy
-once more to pick them up.
+Committing triggers a redeploy. These are identifiers rather than credentials, so committing them
+to a public repository does not grant anyone access; if you would rather not publish them at all,
+make the repository private first.
 
-### 6. Add mailboxes
+### 5. Add mailboxes
 
 Open the Worker's root URL, sign in through Access, and add each account with its provider button.
 See [Yahoo and iCloud app passwords](#yahoo-and-icloud-app-passwords).
@@ -389,27 +381,13 @@ written to KV, and is never rendered back into the page after saving.
 
 ## Cloudflare repository builds
 
-Cloudflare only receives files committed to the connected Git repository, so it cannot read the
-ignored local `wrangler.production.toml`. Configure the existing Worker as follows:
+Cloudflare only receives files committed to the connected Git repository. Because `wrangler.toml`
+carries the KV namespace binding and the Access variables, a Git-connected build needs no build
+variables at all — set the deploy command to `npx wrangler deploy` and add
+`CREDENTIAL_ENCRYPTION_KEY` under **Settings → Variables and Secrets**.
 
-1. Keep these runtime values under **Settings → Variables and Secrets**:
-    - Plaintext: `OUTLOOK_CLIENT_ID`, `OUTLOOK_TENANT`, `POLICY_AUD`, and `TEAM_DOMAIN`.
-    - Secret: `CREDENTIAL_ENCRYPTION_KEY` and `OUTLOOK_CLIENT_SECRET`.
-2. Under **Settings → Build → Variables and Secrets**, add a build environment variable named
-   `EMAIL_KV_NAMESPACE_ID`, set it to the existing `EMAIL_KV` namespace ID, and enable
-   **Encrypt**. Runtime variables from step 1 are not available to repository build commands.
-3. Set the deploy command to `npm run cloudflare:upload` for the first verification build. This
-   creates a version without promoting it to the active deployment.
-4. After verifying the uploaded version, change the deploy command to
-   `npm run cloudflare:deploy` to deploy successful `main` builds automatically.
-
-The repository includes `.node-version`, so Cloudflare uses the supported Node version without a
-separate build variable. The generated configuration sets `keep_vars: true`, omits `vars`, and
-declares the required secret names without supplying or replacing their values. It is written
-with owner-only file permissions and ignored by Git.
-
-Do not replace `CREDENTIAL_ENCRYPTION_KEY` on an existing deployment. Existing encrypted account
-records can only be read with the key that encrypted them.
+To verify a change before it goes live, set the deploy command to `npx wrangler versions upload`.
+That uploads a version without promoting it; switch back to `npx wrangler deploy` to release.
 
 ## Dependency updates
 

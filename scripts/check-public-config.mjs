@@ -1,46 +1,40 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+// This repository is public, so guard against committing anything that actually
+// grants access. Deployment identifiers (the KV namespace ID, the Access team
+// domain and audience) are intentionally committed in wrangler.toml: they are
+// inert without account credentials, and keeping them in one tracked file avoids
+// a build-time codegen step whose only purpose was hiding them.
+//
+// What must never land in the repository is a credential: the account ID, the
+// AES key that decrypts stored mailbox passwords, and the Outlook client secret.
+
 const wrangler = await readFile("wrangler.toml", "utf8");
 const workerTypes = await readFile("worker-configuration.d.ts", "utf8");
 const gitignore = await readFile(".gitignore", "utf8");
-const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 
 assert.doesNotMatch(wrangler, /^\s*account_id\s*=/m, "wrangler.toml must not contain account_id");
-assert.match(
+assert.doesNotMatch(
 	wrangler,
-	/id = "replace-with-your-kv-namespace-id"/,
-	"wrangler.toml must keep the sanitized KV placeholder",
+	/^\s*CREDENTIAL_ENCRYPTION_KEY\s*=/m,
+	"CREDENTIAL_ENCRYPTION_KEY is a secret and must be set in the dashboard, not wrangler.toml",
 );
-assert.match(
+assert.doesNotMatch(
 	wrangler,
-	/TEAM_DOMAIN = "https:\/\/your-team\.cloudflareaccess\.com"/,
-	"wrangler.toml must keep the sanitized Access domain",
+	/^\s*OUTLOOK_CLIENT_SECRET\s*=/m,
+	"OUTLOOK_CLIENT_SECRET is a secret and must be set in the dashboard, not wrangler.toml",
 );
 assert.doesNotMatch(
 	workerTypes,
-	/TEAM_DOMAIN:\s*"/,
-	"generated Worker types must not contain a literal Access domain",
+	/CREDENTIAL_ENCRYPTION_KEY:\s*"/,
+	"generated Worker types must not contain a literal encryption key",
 );
 assert.doesNotMatch(
 	workerTypes,
-	/POLICY_AUD:\s*"/,
-	"generated Worker types must not contain a literal Access audience",
+	/OUTLOOK_CLIENT_SECRET:\s*"/,
+	"generated Worker types must not contain a literal Outlook client secret",
 );
-assert.match(
-	gitignore,
-	/^wrangler\.generated\.json$/m,
-	"the generated private Cloudflare config must be ignored",
-);
-assert.match(
-	packageJson.scripts["cloudflare:upload"],
-	/--config wrangler\.generated\.json$/,
-	"Cloudflare uploads must use the generated private config",
-);
-assert.match(
-	packageJson.scripts["cloudflare:deploy"],
-	/--config wrangler\.generated\.json$/,
-	"Cloudflare deployments must use the generated private config",
-);
+assert.match(gitignore, /^\.dev\.vars$/m, "local .dev.vars secrets must be ignored");
 
-console.log("Public configuration is sanitized.");
+console.log("No credentials are committed to the public repository.");
