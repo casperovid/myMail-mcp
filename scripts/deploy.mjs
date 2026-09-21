@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /** Secrets promoted from the build environment, when present. */
-const PROMOTED = ["CREDENTIAL_ENCRYPTION_KEY", "OUTLOOK_CLIENT_SECRET"];
+const PROMOTED = ["CREDENTIAL_ENCRYPTION_KEY", "OUTLOOK_CLIENT_SECRET", "GITHUB_CLIENT_SECRET"];
 
 function collectSecrets(environment) {
 	const secrets = {};
