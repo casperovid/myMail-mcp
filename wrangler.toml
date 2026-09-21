@@ -11,33 +11,17 @@ new_sqlite_classes = ["MyMCP"]
 name = "MCP_OBJECT"
 class_name = "MyMCP"
 
-# Mounted as one server on a shared MCP hub hostname. A pattern route (rather
-# than custom_domain) leaves the rest of mcp.timothyjacobs.net free for other
-# Workers at their own paths. Pattern routes require an existing proxied DNS
-# record for the hostname: an AAAA record for `mcp` pointing at 100:: is the
-# standard originless placeholder.
 [[routes]]
-pattern = "mcp.timothyjacobs.net/myMail*"
-zone_name = "timothyjacobs.net"
+pattern = "mcp.casperovid.no/myMail*"
+zone_name = "casperovid.no"
 
 [[kv_namespaces]]
 binding = "EMAIL_KV"
-id = "46051647e7de4485876427a3570780ab"
+id = "ef2884498da64a66a91ae34f8517d09a"
 
-# Non-secret deployment coordinates. These are identifiers, not credentials:
-# access is gated by the Cloudflare Access policy and by CREDENTIAL_ENCRYPTION_KEY,
-# which is a dashboard secret and never appears in this file.
-#
-# TEAM_DOMAIN must carry the https:// scheme and no trailing slash: the Worker
-# uses it verbatim as the expected JWT issuer and as the base for the Access
-# certs endpoint.
 [vars]
-TEAM_DOMAIN = "https://myjacobsnetwork.cloudflareaccess.com"
-POLICY_AUD = "fea464790cfbde4e9972b9f2aafbea4186ba715f48c59d5062acd9afa1028b57"
-
-# Outlook is opt-in and unused for password-authenticated providers
-# (Gmail, iCloud, Yahoo, custom IMAP). Leave these alone unless you add an
-# Outlook mailbox, which also needs the OUTLOOK_CLIENT_SECRET dashboard secret.
+TEAM_DOMAIN = "https://placeholder.cloudflareaccess.com"
+POLICY_AUD = "placeholder"
 OUTLOOK_TENANT = "consumers"
 OUTLOOK_CLIENT_ID = ""
 
