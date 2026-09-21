@@ -407,7 +407,7 @@ export class MailService {
 			if (input.subject === undefined) throw new Error("Provide subject for a new draft");
 			draftInput = { ...input, to: input.to, subject: input.subject };
 		}
-		const draft = buildDraftMessage(account.email, draftInput);
+		const draft = buildDraftMessage(`${account.name} <${account.email}>`, draftInput);
 		const location = await this.withImap(input.accountId, (session) =>
 			session.createDraft(draft.source, draft.messageId),
 		);
@@ -468,7 +468,7 @@ export class MailService {
 			if (!existing.flags.some((flag) => flag.toLowerCase() === "\\draft"))
 				throw new Error(`Message UID ${input.uid} is not marked as an IMAP draft`);
 			const parsed = await simpleParser(Buffer.from(existing.source));
-			const draft = buildDraftMessage(account.email, {
+			const draft = buildDraftMessage(`${account.name} <${account.email}>`, {
 				to: input.to ?? addressList(parsed.to),
 				cc: input.cc ?? optionalAddresses(parsed.cc),
 				bcc: input.bcc ?? optionalAddresses(parsed.bcc),
