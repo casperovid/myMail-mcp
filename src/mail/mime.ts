@@ -26,7 +26,7 @@ export function buildDraftMessage(
 	const cc = list(input.cc);
 	const bcc = list(input.bcc);
 	const headers = [
-		`From: ${from}`,
+		`From: ${formatAddress(from)}`,
 		`To: ${addressHeader(input.to)}`,
 		...(cc.length ? [`Cc: ${addressHeader(cc)}`] : []),
 		...(bcc.length ? [`Bcc: ${addressHeader(bcc)}`] : []),
