@@ -12,7 +12,7 @@ name = "MCP_OBJECT"
 class_name = "MyMCP"
 
 [[routes]]
-pattern = "mcp.casperovid.no/myMail*"
+pattern = "mcp.casperovid.no/*"
 zone_name = "casperovid.no"
 
 [[kv_namespaces]]
@@ -20,6 +20,8 @@ binding = "EMAIL_KV"
 id = "ef2884498da64a66a91ae34f8517d09a"
 
 [vars]
+GITHUB_CLIENT_ID = "Ov23liUlzwBp2iwoXO4A"
+ALLOWED_GITHUB_LOGIN = "casperovid"
 TEAM_DOMAIN = "https://placeholder.cloudflareaccess.com"
 POLICY_AUD = "placeholder"
 OUTLOOK_TENANT = "consumers"
