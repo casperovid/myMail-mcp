@@ -11,6 +11,7 @@ import { AccountStore } from "./mail/account-store";
 import { MailService } from "./mail/mail-service";
 import type { MailEnv } from "./mail/types";
 import { observeTool } from "./observability";
+import { MCP_APP_MIME_TYPE, SEND_PREVIEW_HTML, SEND_PREVIEW_URI } from "./send-preview-card";
 
 const accountSelector = {
 	accountId: z
@@ -125,6 +126,24 @@ const remoteCreate = annotations(false, false, false, true);
 const remoteMove = annotations(false, true, false, true);
 const remoteDelete = annotations(false, true, true, true);
 const remoteSend = annotations(false, true, false, true);
+
+const PREVIEW_TTL_MS = 15 * 60 * 1000;
+
+interface PreviewRecord {
+	accountId: string;
+	folder: string;
+	uid: number;
+	contentHash: string;
+	expiresAt: number;
+}
+
+function randomToken(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(32));
+	return btoa(String.fromCharCode(...bytes))
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
+}
 
 export class MyMCP extends McpAgent<MailEnv> {
 	server = new McpServer({ name: "email-mcp-server", version: "1.0.0" });
@@ -1339,6 +1358,210 @@ export class MyMCP extends McpAgent<MailEnv> {
 							}),
 						),
 					),
+		);
+
+		// --- MCP Apps send approval: preview card + app-only Send/Cancel tools ---
+		const storage = this.ctx.storage;
+		const previewKey = (token: string) => `send-preview:${token}`;
+		const cardMeta = {
+			ui: { resourceUri: SEND_PREVIEW_URI },
+			"ui/resourceUri": SEND_PREVIEW_URI,
+		};
+		const appOnlyMeta = { ui: { visibility: ["app"] } };
+		const sendResultOutput = {
+			messageId: z.string().optional(),
+			accepted: z.array(z.string()),
+			rejected: z.array(z.string()),
+			accountId: z.string(),
+			folder: z.string(),
+			uid: z.number().int(),
+			sentSaved: z.boolean(),
+			sentFolder: z.string().optional(),
+			sentUid: z.number().int().optional(),
+			sentError: z.string().optional(),
+			draftDeleted: z.boolean(),
+		};
+		const consumePreview = async (token: string) => {
+			const record = await storage.get<PreviewRecord>(previewKey(token));
+			// Delete before use so a token can never be replayed, even if the send below fails.
+			await storage.delete(previewKey(token));
+			if (!record || record.expiresAt < Date.now())
+				throw new Error(
+					"The send approval token is invalid, already used, cancelled, or expired. Create a new preview with email_preview_send.",
+				);
+			return record;
+		};
+
+		this.server.registerResource(
+			"email_send_preview_card",
+			SEND_PREVIEW_URI,
+			{
+				title: "Email send approval card",
+				description:
+					"Interactive card that shows the full draft email with Send and Cancel buttons.",
+				mimeType: MCP_APP_MIME_TYPE,
+			},
+			async () => ({
+				contents: [
+					{
+						uri: SEND_PREVIEW_URI,
+						mimeType: MCP_APP_MIME_TYPE,
+						text: SEND_PREVIEW_HTML,
+						_meta: { ui: { prefersBorder: true } },
+					},
+				],
+			}),
+		);
+
+		this.server.registerTool(
+			"email_preview_send",
+			{
+				description:
+					"Show an approval card for sending an existing draft: displays From, To, Cc, Subject, the full plain text body, and the HTML body in a sandbox, with Send and Cancel buttons the user presses themselves. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, or email_update_message_draft. Side effects: none on the mailbox; it only creates a short-lived one-time approval token (15 minutes) bound to a hash of the draft content. Nothing is sent until the user presses Send on the card; if the draft changes afterwards, sending is refused. Prefer this over email_send_draft when the user wants to review the whole email. Do not call any send tool yourself after this; tell the user to review the card.",
+				inputSchema: {
+					...accountSelector,
+					folder: z
+						.string()
+						.describe("Exact IMAP Drafts folder path returned by a draft tool."),
+					uid: z
+						.number()
+						.int()
+						.positive()
+						.describe(
+							"Draft IMAP UID returned by a draft tool; not the Message-ID header.",
+						),
+				},
+				outputSchema: {
+					accountId: z.string(),
+					accountName: z.string(),
+					canSend: z.boolean(),
+					folder: z.string(),
+					uid: z.number().int(),
+					messageId: z.string().optional(),
+					from: z.string(),
+					to: z.array(z.string()),
+					cc: z.array(z.string()),
+					bcc: z.array(z.string()),
+					subject: z.string(),
+					text: z.string(),
+					hasHtml: z.boolean(),
+					attachments: z.array(
+						z.object({
+							filename: z.string().optional(),
+							contentType: z.string(),
+							size: z.number(),
+						}),
+					),
+					expiresAt: z.string(),
+					sent: z.literal(false),
+				},
+				annotations: titled("Preview Email Before Sending", remoteRead),
+				_meta: cardMeta,
+			},
+			async ({ accountId, folder, uid }: any) =>
+				observeTool("email_preview_send", async () => {
+					const { html, contentHash, ...shown } = await mail.previewDraft(
+						accountId,
+						folder,
+						uid,
+					);
+					const now = Date.now();
+					for (const [key, value] of await storage.list<PreviewRecord>({
+						prefix: "send-preview:",
+					}))
+						if (value.expiresAt < now) await storage.delete(key);
+					const token = randomToken();
+					const expiresAt = now + PREVIEW_TTL_MS;
+					await storage.put(previewKey(token), {
+						accountId: shown.accountId,
+						folder,
+						uid,
+						contentHash,
+						expiresAt,
+					} satisfies PreviewRecord);
+					const structured = {
+						...shown,
+						hasHtml: html !== undefined,
+						expiresAt: new Date(expiresAt).toISOString(),
+						sent: false as const,
+					};
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify(
+									{
+										...structured,
+										note: "NOT sent. An approval card is shown; the user must press Send on it.",
+									},
+									null,
+									2,
+								),
+							},
+						],
+						structuredContent: structured,
+						// _meta is delivered to the card only; the token and HTML are kept out of content.
+						_meta: { previewToken: token, html },
+					};
+				}),
+		);
+
+		this.server.registerTool(
+			"email_send_previewed_draft",
+			{
+				description:
+					"App-only: called by the Send button on the email_preview_send card, never by the model. Sends the previewed draft using SMTP with a one-time approval token. Side effects: sends the message, appends a copy to the IMAP Sent folder when possible, and deletes the draft; refuses and sends nothing if the token is invalid, used, or expired, or the draft content changed since the preview.",
+				inputSchema: {
+					previewToken: z
+						.string()
+						.min(20)
+						.describe(
+							"One-time approval token delivered to the card by email_preview_send.",
+						),
+				},
+				outputSchema: sendResultOutput,
+				annotations: titled("Send Previewed Email Draft", remoteSend),
+				_meta: appOnlyMeta,
+			},
+			async ({ previewToken }: any) =>
+				observeTool("email_send_previewed_draft", async () => {
+					const record = await consumePreview(previewToken);
+					return text(
+						await mail.sendApprovedDraft(
+							record.accountId,
+							record.folder,
+							record.uid,
+							record.contentHash,
+						),
+					);
+				}),
+		);
+
+		this.server.registerTool(
+			"email_cancel_previewed_draft",
+			{
+				description:
+					"App-only: called by the Cancel button on the email_preview_send card, never by the model. Invalidates the one-time approval token so the previewed draft can no longer be sent from that card. Does not delete the draft or change the mailbox.",
+				inputSchema: {
+					previewToken: z
+						.string()
+						.min(20)
+						.describe(
+							"One-time approval token delivered to the card by email_preview_send.",
+						),
+				},
+				outputSchema: { cancelled: z.boolean() },
+				annotations: titled(
+					"Cancel Previewed Email Send",
+					annotations(false, false, true, false),
+				),
+				_meta: appOnlyMeta,
+			},
+			async ({ previewToken }: any) =>
+				observeTool("email_cancel_previewed_draft", async () => {
+					await storage.delete(previewKey(previewToken));
+					return text({ cancelled: true });
+				}),
 		);
 	}
 }

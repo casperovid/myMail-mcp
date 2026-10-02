@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { safeErrorCategory } from "../observability";
 import type { AccountStore } from "./account-store";
 import { findDraftMismatches, type DraftExpectation } from "./draft-verify";
+import { sha256Hex } from "./draft-verify";
 import type { MailAccount } from "./types";
 import { NativeImapSession } from "./native-imap";
 import { buildDraftMessage, NativeSmtpSession, type DraftInput } from "./native-smtp";
@@ -523,13 +524,77 @@ export class MailService {
 			throw new Error(
 				`Draft was NOT sent: the provided fields do not match the draft at ${folder} UID ${uid}. Mismatches:\n${mismatches.join("\n")}`,
 			);
-		const result = await new NativeSmtpSession(account).sendRaw(draft.source);
+		return this.deliverDraft(account, accountId, folder, uid, draft.source);
+	}
+
+	/** Fetches a draft and returns the fields shown on the approval card plus a SHA-256 of its raw source. */
+	async previewDraft(accountId: string | undefined, folder: string, uid: number) {
+		const account = await this.authorizedAccount(accountId);
+		const draft = await this.withImap(accountId, (session) => session.getMessage(folder, uid));
+		const parsed = await simpleParser(Buffer.from(draft.source));
+		const addresses = (field: AddressObject | AddressObject[] | undefined) =>
+			(Array.isArray(field) ? field : field ? [field] : []).flatMap((object) =>
+				object.value.map((entry) =>
+					entry.name ? `${entry.name} <${entry.address}>` : (entry.address ?? ""),
+				),
+			);
+		return {
+			accountId: account.id,
+			accountName: account.name,
+			canSend: Boolean(account.smtp),
+			folder,
+			uid,
+			messageId: parsed.messageId,
+			from: parsed.from?.text ?? account.email,
+			to: addresses(parsed.to),
+			cc: addresses(parsed.cc),
+			bcc: addresses(parsed.bcc),
+			subject: parsed.subject ?? "",
+			text: parsed.text ?? "",
+			html: typeof parsed.html === "string" ? parsed.html : undefined,
+			attachments: parsed.attachments.map((item) => ({
+				filename: item.filename,
+				contentType: item.contentType,
+				size: item.size,
+			})),
+			contentHash: await sha256Hex(draft.source),
+		};
+	}
+
+	/** Sends a draft only if its raw source still hashes to the value approved on the preview card. */
+	async sendApprovedDraft(
+		accountId: string | undefined,
+		folder: string,
+		uid: number,
+		approvedHash: string,
+	) {
+		const account = await this.authorizedAccount(accountId);
+		if (!account.smtp)
+			throw new Error(
+				`SMTP is not configured for account ${account.name}; sending email is unavailable`,
+			);
+		const draft = await this.withImap(accountId, (session) => session.getMessage(folder, uid));
+		if ((await sha256Hex(draft.source)) !== approvedHash)
+			throw new Error(
+				`Draft was NOT sent: the draft at ${folder} UID ${uid} changed after the preview was approved. Create a new preview with email_preview_send.`,
+			);
+		return this.deliverDraft(account, accountId, folder, uid, draft.source);
+	}
+
+	private async deliverDraft(
+		account: MailAccount,
+		accountId: string | undefined,
+		folder: string,
+		uid: number,
+		source: Uint8Array,
+	) {
+		const result = await new NativeSmtpSession(account).sendRaw(source);
 		let sentSaved = true;
 		let sentLocation: { folder: string; uid: number } | undefined;
 		let sentError: string | undefined;
 		try {
 			sentLocation = await this.withImap(accountId, (session) =>
-				session.saveSent(draft.source, result.messageId),
+				session.saveSent(source, result.messageId),
 			);
 		} catch (error) {
 			sentSaved = false;

@@ -535,6 +535,18 @@ folder and then removes the draft. A Sent append failure is reported as `sentSav
 cleanup failure is reported as `draftDeleted: false`, without reporting the already accepted send
 as failed.
 
+### Send approval card (MCP Apps)
+
+`email_preview_send` (`folder`, `uid`) renders an MCP Apps card (`ui://email/send-preview.html`) showing From, To,
+Cc, Subject, the full plain text body, and the HTML body in a script-less sandboxed iframe, with **Send** and
+**Cancel** buttons. Nothing is sent until the user presses Send. The tool creates a one-time token (15 minutes)
+bound to a SHA-256 of the draft's raw source and hands it to the card only through the result `_meta`. Send calls
+`email_send_previewed_draft` and Cancel calls `email_cancel_previewed_draft`; both are registered with
+`_meta.ui.visibility: ["app"]`, so the host must hide them from the model and reject model calls. The server
+consumes the token before sending and refuses if it is unknown, used, expired, or the draft content changed.
+The spec leaves visibility enforcement to the host; a client without MCP Apps support will not render the card.
+`email_send_draft` is unchanged.
+
 Draft attachments use native MIME encoding. Pass up to 20 attachments as `attachments`, each
 with `filename`, `contentType`, and `contentBase64`. The base64 value must contain the raw file
 bytes without a data-URL prefix. Draft text and HTML bodies are emitted as quoted-printable MIME
