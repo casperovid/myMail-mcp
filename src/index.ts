@@ -1506,6 +1506,31 @@ export class MyMCP extends McpAgent<MailEnv> {
 				}),
 		);
 
+		// TEMPORARY diagnostic: same name pattern, description, input schema and annotations as
+		// email_preview_send, but no _meta.ui / resource link and no output schema. Remove after testing.
+		this.server.registerTool(
+			"email_preview_test",
+			{
+				description:
+					"Show an approval card for sending an existing draft: displays From, To, Cc, Subject, the full plain text body, and the HTML body in a sandbox, with Send and Cancel buttons the user presses themselves. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, or email_update_message_draft. Temporary diagnostic copy that only returns the text ok.",
+				inputSchema: {
+					...accountSelector,
+					folder: z
+						.string()
+						.describe("Exact IMAP Drafts folder path returned by a draft tool."),
+					uid: z
+						.number()
+						.int()
+						.positive()
+						.describe(
+							"Draft IMAP UID returned by a draft tool; not the Message-ID header.",
+						),
+				},
+				annotations: titled("Preview Email Before Sending (test)", remoteRead),
+			},
+			async () => ({ content: [{ type: "text" as const, text: "ok" }] }),
+		);
+
 		this.server.registerTool(
 			"email_send_previewed_draft",
 			{
