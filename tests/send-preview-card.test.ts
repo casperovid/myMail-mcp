@@ -15,6 +15,11 @@ assert.ok(script);
 new Function(script);
 assert.doesNotMatch(script, /innerHTML|outerHTML|document\.write/);
 assert.match(SEND_PREVIEW_HTML, /<iframe[^>]*sandbox=""/);
+assert.match(script, /appInfo/);
+assert.doesNotMatch(script, /clientInfo/);
+assert.match(script, /ui\/notifications\/size-changed/);
+assert.match(script, /ResizeObserver/);
+assert.doesNotMatch(SEND_PREVIEW_HTML, /<(script|link)[^>]+(src|href)=/i);
 assert.match(script, /email_send_previewed_draft/);
 assert.match(script, /email_cancel_previewed_draft/);
 

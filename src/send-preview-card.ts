@@ -63,7 +63,7 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 			pending.set(id, { resolve, reject });
 			post({ id, method, params });
 		});
-	const setStatus = (message, cls) => { $("status").textContent = message; $("status").className = cls || ""; };
+	const setStatus = (message, cls) => { $("status").textContent = message; $("status").className = cls || ""; reportSize(); };
 	const setBusy = (busy) => { $("send").disabled = busy || done; $("cancel").disabled = busy || done; };
 
 	window.addEventListener("message", (event) => {
@@ -104,6 +104,7 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 		}
 		if (data.bcc && data.bcc.length) setStatus("Skjult kopi (Bcc): " + data.bcc.join(", "));
 		if (data.canSend === false) { $("send").disabled = true; setStatus("SMTP er ikke konfigurert for denne kontoen; sending er utilgjengelig.", "error"); }
+		reportSize();
 	}
 
 	async function act(name, doneMessage, cls) {
@@ -124,12 +125,40 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 	$("send").addEventListener("click", () => act("email_send_previewed_draft", "Sendt.", "ok"));
 	$("cancel").addEventListener("click", () => act("email_cancel_previewed_draft", "Avbrutt. Ingenting er sendt.", ""));
 
+	// Same measurement as the official SDK's autoResize: the host sizes a flexible iframe only
+	// from ui/notifications/size-changed, so without it the card renders with no height.
+	let lastSize = "";
+	let sizeReporting = false;
+	function reportSize() {
+		if (!sizeReporting) return;
+		const html = document.documentElement;
+		const previous = html.style.height;
+		html.style.height = "max-content";
+		const height = Math.ceil(html.getBoundingClientRect().height);
+		html.style.height = previous;
+		const width = Math.ceil(window.innerWidth);
+		const key = width + "x" + height;
+		if (key === lastSize) return;
+		lastSize = key;
+		post({ method: "ui/notifications/size-changed", params: { width, height } });
+	}
+	function startSizeReporting() {
+		sizeReporting = true;
+		reportSize();
+		const observer = new ResizeObserver(reportSize);
+		observer.observe(document.documentElement);
+		observer.observe(document.body);
+	}
+
+	// McpUiInitializeRequest params: appInfo, appCapabilities, protocolVersion.
 	request("ui/initialize", {
+		appInfo: { name: "email-send-preview", version: "1.0.0" },
 		appCapabilities: {},
-		clientInfo: { name: "email-send-preview", version: "1.0.0" },
 		protocolVersion: "2026-01-26",
-	}).then(() => post({ method: "ui/notifications/initialized", params: {} }))
-	  .catch((error) => setStatus(error.message, "error"));
+	}).then(() => {
+		post({ method: "ui/notifications/initialized", params: {} });
+		startSizeReporting();
+	}).catch((error) => setStatus(error.message, "error"));
 })();
 </script>
 </body>
