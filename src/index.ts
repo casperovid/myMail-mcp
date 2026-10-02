@@ -1625,7 +1625,7 @@ const mcpHandler = MyMCP.serve(withBasePath("/mcp"));
  * the tool name for tools/call) so client behavior can be traced with `wrangler tail`.
  * Parameters and arguments are never logged.
  */
-async function logRpcRequest(request: Request): Promise<void> {
+async function logRpcRequest(request: Request): Promise<{ id: unknown; method: string }[]> {
 	try {
 		const base = {
 			event: "mcp_rpc",
@@ -1634,10 +1634,13 @@ async function logRpcRequest(request: Request): Promise<void> {
 		};
 		if (request.method !== "POST") {
 			console.log(base);
-			return;
+			return [];
 		}
 		const body = JSON.parse(await request.clone().text());
+		const parsed: { id: unknown; method: string }[] = [];
 		for (const message of Array.isArray(body) ? body : [body]) {
+			if (typeof message?.method === "string")
+				parsed.push({ id: message.id, method: message.method });
 			const params = message?.params;
 			console.log({
 				...base,
@@ -1647,17 +1650,82 @@ async function logRpcRequest(request: Request): Promise<void> {
 				tool: message?.method === "tools/call" ? params?.name : undefined,
 			});
 		}
+		return parsed;
 	} catch {
 		console.log({ event: "mcp_rpc", httpMethod: request.method, rpcMethod: "(unparseable)" });
+		return [];
+	}
+}
+
+const TRACED_RESPONSES = new Set(["initialize", "tools/list", "resources/list"]);
+const DIAGNOSTIC_TOOLS = new Set(["email_preview_send", "email_preview_test"]);
+
+/**
+ * TEMPORARY diagnostics: logs what initialize, tools/list and resources/list actually return
+ * (capabilities, preview tool metadata, resource entries). No tokens or mailbox data are in
+ * these responses. Remove once the card rendering issue is resolved.
+ */
+async function logRpcResponse(
+	response: Response,
+	requests: { id: unknown; method: string }[],
+): Promise<void> {
+	try {
+		const raw = await response.text();
+		const payloads = raw
+			.split("\n")
+			.filter((line) => line.startsWith("data:"))
+			.map((line) => line.slice(5).trim());
+		if (!payloads.length && raw.trim()) payloads.push(raw.trim());
+		for (const payload of payloads) {
+			const message = JSON.parse(payload);
+			const method = requests.find((entry) => entry.id === message?.id)?.method;
+			const result = message?.result;
+			if (!result || !method) continue;
+			if (method === "initialize")
+				console.log({
+					event: "mcp_rpc_response",
+					rpcMethod: method,
+					protocolVersion: result.protocolVersion,
+					serverInfo: result.serverInfo,
+					capabilities: result.capabilities,
+				});
+			else if (method === "tools/list")
+				console.log({
+					event: "mcp_rpc_response",
+					rpcMethod: method,
+					toolCount: result.tools?.length,
+					toolNames: result.tools?.map((tool: any) => tool.name),
+					diagnosticTools: result.tools
+						?.filter((tool: any) => DIAGNOSTIC_TOOLS.has(tool.name))
+						.map((tool: any) => ({
+							name: tool.name,
+							_meta: tool._meta ?? null,
+							annotations: tool.annotations,
+							inputSchemaKeys: Object.keys(tool.inputSchema ?? {}),
+							outputSchemaKeys: Object.keys(tool.outputSchema ?? {}),
+						})),
+				});
+			else if (method === "resources/list")
+				console.log({
+					event: "mcp_rpc_response",
+					rpcMethod: method,
+					resources: result.resources,
+				});
+		}
+	} catch {
+		console.log({ event: "mcp_rpc_response", status: "unparseable" });
 	}
 }
 
 export default {
 	async fetch(request: Request, env: MailEnv, ctx: ExecutionContext): Promise<Response> {
 		return handleRequest(request, env, {
-			mcp: () => {
-				ctx.waitUntil(logRpcRequest(request));
-				return mcpHandler.fetch(request, env, ctx);
+			mcp: async () => {
+				const requests = await logRpcRequest(request);
+				const response = await mcpHandler.fetch(request, env, ctx);
+				if (requests.some((entry) => TRACED_RESPONSES.has(entry.method)))
+					ctx.waitUntil(logRpcResponse(response.clone(), requests));
+				return response;
 			},
 			app: () => app.fetch(request, env, ctx),
 		});
