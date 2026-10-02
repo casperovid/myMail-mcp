@@ -1643,6 +1643,16 @@ async function logRpcRequest(request: Request): Promise<{ id: unknown; method: s
 			if (typeof message?.method === "string")
 				parsed.push({ id: message.id, method: message.method });
 			const params = message?.params;
+			// TEMPORARY diagnostics: what the client announces in initialize (no tokens or auth headers).
+			if (message?.method === "initialize")
+				console.log({
+					event: "mcp_rpc_initialize",
+					clientInfo: params?.clientInfo,
+					protocolVersion: params?.protocolVersion,
+					capabilityKeys: Object.keys(params?.capabilities ?? {}),
+					extensions: params?.capabilities?.extensions ?? null,
+					userAgent: request.headers.get("user-agent"),
+				});
 			// TEMPORARY diagnostics for the server/discover probe (no authorization header, no tokens).
 			if (message?.method === "server/discover")
 				console.log({
