@@ -11,6 +11,7 @@ import { AccountStore } from "./mail/account-store";
 import { MailService } from "./mail/mail-service";
 import type { MailEnv } from "./mail/types";
 import { observeTool } from "./observability";
+import { unknownMethodResponse } from "./unknown-method";
 import { MCP_APP_MIME_TYPE, SEND_PREVIEW_HTML, SEND_PREVIEW_URI } from "./send-preview-card";
 
 const accountSelector = {
@@ -1642,6 +1643,16 @@ async function logRpcRequest(request: Request): Promise<{ id: unknown; method: s
 			if (typeof message?.method === "string")
 				parsed.push({ id: message.id, method: message.method });
 			const params = message?.params;
+			// TEMPORARY diagnostics for the server/discover probe (no authorization header, no tokens).
+			if (message?.method === "server/discover")
+				console.log({
+					event: "mcp_rpc_discover",
+					params: message.params,
+					id: message.id,
+					mcpProtocolVersion: request.headers.get("mcp-protocol-version"),
+					mcpSessionId: request.headers.get("mcp-session-id")?.slice(0, 8) ?? null,
+					userAgent: request.headers.get("user-agent"),
+				});
 			console.log({
 				...base,
 				rpcMethod: message?.method ?? (message?.result ? "(response)" : "(unknown)"),
@@ -1722,6 +1733,11 @@ export default {
 		return handleRequest(request, env, {
 			mcp: async () => {
 				const requests = await logRpcRequest(request);
+				const unknown = await unknownMethodResponse(request);
+				if (unknown) {
+					console.log({ event: "mcp_rpc_unknown_method", status: unknown.status });
+					return unknown;
+				}
 				const response = await mcpHandler.fetch(request, env, ctx);
 				if (requests.some((entry) => TRACED_RESPONSES.has(entry.method)))
 					ctx.waitUntil(logRpcResponse(response.clone(), requests));
