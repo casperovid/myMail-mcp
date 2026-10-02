@@ -1620,10 +1620,45 @@ import { handleRequest } from "./auth";
 
 const mcpHandler = MyMCP.serve(withBasePath("/mcp"));
 
+/**
+ * Logs the JSON-RPC method of every MCP request (plus the resource URI for resources/read and
+ * the tool name for tools/call) so client behavior can be traced with `wrangler tail`.
+ * Parameters and arguments are never logged.
+ */
+async function logRpcRequest(request: Request): Promise<void> {
+	try {
+		const base = {
+			event: "mcp_rpc",
+			httpMethod: request.method,
+			sessionId: request.headers.get("mcp-session-id")?.slice(0, 8),
+		};
+		if (request.method !== "POST") {
+			console.log(base);
+			return;
+		}
+		const body = JSON.parse(await request.clone().text());
+		for (const message of Array.isArray(body) ? body : [body]) {
+			const params = message?.params;
+			console.log({
+				...base,
+				rpcMethod: message?.method ?? (message?.result ? "(response)" : "(unknown)"),
+				id: message?.id,
+				uri: message?.method === "resources/read" ? params?.uri : undefined,
+				tool: message?.method === "tools/call" ? params?.name : undefined,
+			});
+		}
+	} catch {
+		console.log({ event: "mcp_rpc", httpMethod: request.method, rpcMethod: "(unparseable)" });
+	}
+}
+
 export default {
 	async fetch(request: Request, env: MailEnv, ctx: ExecutionContext): Promise<Response> {
 		return handleRequest(request, env, {
-			mcp: () => mcpHandler.fetch(request, env, ctx),
+			mcp: () => {
+				ctx.waitUntil(logRpcRequest(request));
+				return mcpHandler.fetch(request, env, ctx);
+			},
 			app: () => app.fetch(request, env, ctx),
 		});
 	},
