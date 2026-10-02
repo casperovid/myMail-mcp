@@ -2,6 +2,7 @@ import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
 import { Buffer } from "node:buffer";
 import { safeErrorCategory } from "../observability";
 import type { AccountStore } from "./account-store";
+import { findDraftMismatches, type DraftExpectation } from "./draft-verify";
 import type { MailAccount } from "./types";
 import { NativeImapSession } from "./native-imap";
 import { buildDraftMessage, NativeSmtpSession, type DraftInput } from "./native-smtp";
@@ -495,13 +496,33 @@ export class MailService {
 		});
 	}
 
-	async sendDraft(accountId: string | undefined, folder: string, uid: number) {
+	async sendDraft(
+		accountId: string | undefined,
+		folder: string,
+		uid: number,
+		expected: DraftExpectation,
+	) {
 		const account = await this.authorizedAccount(accountId);
 		if (!account.smtp)
 			throw new Error(
 				`SMTP is not configured for account ${account.name}; sending email is unavailable`,
 			);
 		const draft = await this.withImap(accountId, (session) => session.getMessage(folder, uid));
+		const parsedDraft = await simpleParser(Buffer.from(draft.source));
+		const addressList = (field: AddressObject | AddressObject[] | undefined) =>
+			(Array.isArray(field) ? field : field ? [field] : []).flatMap((object) =>
+				object.value.map((entry) => entry.address ?? ""),
+			);
+		const mismatches = findDraftMismatches(expected, {
+			to: addressList(parsedDraft.to),
+			cc: addressList(parsedDraft.cc),
+			subject: parsedDraft.subject ?? "",
+			text: parsedDraft.text ?? "",
+		});
+		if (mismatches.length)
+			throw new Error(
+				`Draft was NOT sent: the provided fields do not match the draft at ${folder} UID ${uid}. Mismatches:\n${mismatches.join("\n")}`,
+			);
 		const result = await new NativeSmtpSession(account).sendRaw(draft.source);
 		let sentSaved = true;
 		let sentLocation: { folder: string; uid: number } | undefined;

@@ -528,7 +528,9 @@ the IMAP `\Trash` special-use flag. `email_delete_messages_permanently` permanen
 messages by IMAP UID and should only be used when permanent deletion is intended.
 
 Sending is a two-step workflow: call `email_create_message_draft`, then pass its returned `folder` and
-IMAP UID field `uid` to `email_send_draft`. After SMTP accepts the message, the server appends a copy to the IMAP Sent
+IMAP UID field `uid` to `email_send_draft` together with the draft's `to`, `cc`, `subject`, and `text`, so the full
+email appears in the client's approval dialog. The server fetches the draft and refuses to send, returning an error
+listing each mismatch, if those fields differ (whitespace and line breaks are normalized). After SMTP accepts the message, the server appends a copy to the IMAP Sent
 folder and then removes the draft. A Sent append failure is reported as `sentSaved: false`, and a
 cleanup failure is reported as `draftDeleted: false`, without reporting the already accepted send
 as failed.

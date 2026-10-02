@@ -1280,7 +1280,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			["email_send_draft"],
 			{
 				description:
-					"Send an existing draft email using SMTP. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, or email_update_message_draft. Side effects: sends the message, appends a copy to the IMAP Sent folder when possible, and deletes the draft after SMTP accepts it. Do not use to compose or edit a draft.",
+					"Send an existing draft email using SMTP. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, or email_update_message_draft. Side effects: sends the message, appends a copy to the IMAP Sent folder when possible, and deletes the draft after SMTP accepts it. Required to, subject, and text (and cc if the draft has Cc recipients) must be exactly what is in the draft, so the full email is shown in the approval dialog; the server fetches the draft and refuses to send, returning an error listing each mismatch, if to, cc, subject, or text differ (whitespace and line breaks are normalized, address case is ignored). Do not use to compose or edit a draft; use email_update_message_draft to change it first.",
 				inputSchema: {
 					...accountSelector,
 					folder: z
@@ -1292,6 +1292,24 @@ export class MyMCP extends McpAgent<MailEnv> {
 						.positive()
 						.describe(
 							"Draft IMAP UID returned by a draft tool; not the Message-ID header.",
+						),
+					to: recipientSchema.describe(
+						"To recipient email address(es), exactly as in the draft. Verified against the draft before sending.",
+					),
+					cc: optionalRecipientSchema
+						.optional()
+						.describe(
+							"Cc recipient email address(es), exactly as in the draft; omit only if the draft has no Cc. Verified against the draft before sending.",
+						),
+					subject: z
+						.string()
+						.describe(
+							"Subject line, exactly as in the draft. Verified against the draft before sending.",
+						),
+					text: z
+						.string()
+						.describe(
+							"Plain text body, exactly as in the draft. Verified against the draft before sending (whitespace and line breaks normalized).",
 						),
 				},
 				outputSchema: {
@@ -1310,9 +1328,16 @@ export class MyMCP extends McpAgent<MailEnv> {
 				annotations: titled("Send Email Draft", remoteSend),
 			},
 			(toolName) =>
-				async ({ accountId, folder, uid }: any) =>
+				async ({ accountId, folder, uid, to, cc, subject, text: body }: any) =>
 					observeTool(toolName, async () =>
-						text(await mail.sendDraft(accountId, folder, uid)),
+						text(
+							await mail.sendDraft(accountId, folder, uid, {
+								to,
+								cc,
+								subject,
+								text: body,
+							}),
+						),
 					),
 		);
 	}
