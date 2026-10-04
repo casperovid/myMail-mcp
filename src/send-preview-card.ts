@@ -1,4 +1,3 @@
-export const SEND_PREVIEW_URI = "ui://email/send-preview.html";
 export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
 
 /**
@@ -203,3 +202,19 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 </script>
 </body>
 </html>`;
+
+/** FNV-1a (32 bit) as 8 hex characters: a short, synchronous, non-cryptographic content hash. */
+export function shortHash(value: string): string {
+	let hash = 0x811c9dc5;
+	for (let index = 0; index < value.length; index++) {
+		hash ^= value.charCodeAt(index);
+		hash = Math.imul(hash, 0x01000193) >>> 0;
+	}
+	return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * Versioned by content: hosts may cache a ui:// resource by URI, so a changed card must get a
+ * new URI. Used for the resource registration and both _meta resource links.
+ */
+export const SEND_PREVIEW_URI = `ui://email/send-preview-${shortHash(SEND_PREVIEW_HTML)}.html`;

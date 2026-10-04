@@ -537,7 +537,7 @@ as failed.
 
 ### Send approval card (MCP Apps)
 
-`email_preview_send` (`folder`, `uid`) renders an MCP Apps card (`ui://email/send-preview.html`) showing From, To,
+`email_preview_send` (`folder`, `uid`) renders an MCP Apps card (`ui://email/send-preview-<hash>.html`, where `<hash>` is derived from the card HTML so hosts that cache by URI pick up changes) showing From, To,
 Cc, Subject, the full plain text body, and the HTML body in a script-less sandboxed iframe, with **Send** and
 **Cancel** buttons. Nothing is sent until the user presses Send. The tool creates a one-time token (15 minutes)
 bound to a SHA-256 of the draft's raw source and hands it to the card only through the result `_meta`. Send calls

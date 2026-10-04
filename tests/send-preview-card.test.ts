@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import { sha256Hex } from "../src/mail/draft-verify.ts";
 import {
 	MCP_APP_MIME_TYPE,
+	shortHash,
 	SEND_PREVIEW_HTML,
 	SEND_PREVIEW_URI,
 } from "../src/send-preview-card.ts";
 
-assert.equal(SEND_PREVIEW_URI, "ui://email/send-preview.html");
+assert.match(SEND_PREVIEW_URI, /^ui:\/\/email\/send-preview-[0-9a-f]{8}\.html$/);
+assert.equal(SEND_PREVIEW_URI, `ui://email/send-preview-${shortHash(SEND_PREVIEW_HTML)}.html`);
+assert.notEqual(shortHash(SEND_PREVIEW_HTML), shortHash(SEND_PREVIEW_HTML + " "));
+assert.equal(shortHash("abc"), shortHash("abc"));
 assert.equal(MCP_APP_MIME_TYPE, "text/html;profile=mcp-app");
 
 // The embedded script must at least parse, and must never write message content as HTML.
@@ -37,3 +41,11 @@ assert.equal(
 );
 assert.notEqual(await sha256Hex(new Uint8Array([1])), await sha256Hex(new Uint8Array([2])));
 console.log("ok");
+
+// The URI must come from the one constant everywhere in index.ts (resource and both _meta links).
+const { readFileSync } = await import("node:fs");
+const indexSource = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+assert.doesNotMatch(indexSource, /send-preview/);
+assert.match(indexSource, /resourceUri: SEND_PREVIEW_URI/);
+assert.match(indexSource, /"ui\/resourceUri": SEND_PREVIEW_URI/);
+assert.match(indexSource, /registerResource\(\s*"email_send_preview_card",\s*SEND_PREVIEW_URI/);
