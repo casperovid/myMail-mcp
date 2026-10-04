@@ -1095,7 +1095,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			["email_create_message_draft"],
 			{
 				description:
-					"Compose, create, or prepare a new email draft or reply draft without sending it. For a reply, provide replyToMessage with the original folder and IMAP UID; for a new message, provide to, subject, and text or HTML. Side effect: creates a draft in the IMAP Drafts folder and returns draft folder, IMAP UID, and Message-ID. Do not use to send; use email_send_draft after reviewing or updating the draft.",
+					"Compose, create, or prepare a new email draft or reply draft without sending it. For a reply, provide replyToMessage with the original folder and IMAP UID; for a new message, provide to, subject, and text or HTML. Side effect: creates a draft in the IMAP Drafts folder and returns draft folder, IMAP UID, and Message-ID. The draft is always saved with both a plain text and an HTML version, and the user's signature is added automatically after the body (before any quoted original) exactly once, so do not write a signature yourself. Do not use to send; use email_send_draft after reviewing or updating the draft.",
 				inputSchema: {
 					...accountSelector,
 					to: recipientSchema
@@ -1182,7 +1182,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			["email_create_forward_draft"],
 			{
 				description:
-					"Create, compose, or prepare a forward draft from one existing message without sending it. Requires source folder and IMAP UID returned by search/get/thread results plus destination recipients. Side effect: creates a new draft in the IMAP Drafts folder, optionally copying original attachments. Do not use to send; use email_send_draft after draft creation.",
+					"Create, compose, or prepare a forward draft from one existing message without sending it. Requires source folder and IMAP UID returned by search/get/thread results plus destination recipients. Side effect: creates a new draft in the IMAP Drafts folder, optionally copying original attachments. The user's signature is added automatically after your intro text (before the forwarded message) exactly once, so do not write a signature yourself. Do not use to send; use email_send_draft after draft creation.",
 				inputSchema: {
 					...accountSelector,
 					folder: z
@@ -1240,7 +1240,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			["email_update_message_draft"],
 			{
 				description:
-					"Edit, update, or replace an existing IMAP draft without sending it. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, email_update_message_draft, or search results for drafts. Side effect: replaces the draft and returns a new draft folder and IMAP UID. Do not use for non-draft messages or to send; use email_send_draft to send.",
+					"Edit, update, or replace an existing IMAP draft without sending it. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, email_update_message_draft, or search results for drafts. Side effect: replaces the draft and returns a new draft folder and IMAP UID. The user's signature is added automatically to a text or html you supply unless it already contains it; parts you do not supply are kept unchanged. Do not use for non-draft messages or to send; use email_send_draft to send.",
 				inputSchema: {
 					...accountSelector,
 					folder: z

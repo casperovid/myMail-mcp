@@ -29,3 +29,5 @@ assert.equal(
 );
 assert.notEqual(await sha256Hex(new Uint8Array([1])), await sha256Hex(new Uint8Array([2])));
 console.log("ok");
+
+assert.match(SEND_PREVIEW_HTML, /<details id="htmlBox" hidden open>/);

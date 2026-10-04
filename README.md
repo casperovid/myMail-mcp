@@ -552,6 +552,17 @@ with `filename`, `contentType`, and `contentBase64`. The base64 value must conta
 bytes without a data-URL prefix. Draft text and HTML bodies are emitted as quoted-printable MIME
 parts; base64 is only required for attachment bytes.
 
+### Signature
+
+Drafts created or edited by `email_create_message_draft`, `email_create_forward_draft`, and
+`email_update_message_draft` get the signature defined in `src/mail/signature.ts` (plain text and HTML, bold name
+and links), after exactly one blank line below the body and before any quoted or forwarded original. New drafts
+are always saved as `multipart/alternative`; if only `text` or only `html` is given, the other version is derived.
+The signature is added once: it is skipped when the supplied text or HTML already contains it, and
+`email_update_message_draft` only touches the parts it is given. Sending, including from the approval card,
+sends the stored draft unchanged. `email_send_draft` ignores the signature when comparing `text`, and the
+approval card shows the HTML version (with the signature) by default.
+
 To create a reply, call `email_create_message_draft` with `replyToMessage.folder` and
 the original message's IMAP UID in `replyToMessage.uid`. The server derives the recipient and subject and adds the correct
 `In-Reply-To` and `References` headers. Reply drafts quote the original message by default; set

@@ -44,7 +44,7 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 		<dt>Vedlegg</dt><dd id="attachments"></dd>
 	</dl>
 	<div class="body" id="text"></div>
-	<details id="htmlBox" hidden><summary>HTML-versjon (sandkasse, uten skript)</summary><iframe id="htmlFrame" sandbox="" referrerpolicy="no-referrer"></iframe></details>
+	<details id="htmlBox" hidden open><summary>HTML-versjon (sandkasse, uten skript)</summary><iframe id="htmlFrame" sandbox="" referrerpolicy="no-referrer"></iframe></details>
 	<div class="actions"><button class="send" id="send">Send</button><button id="cancel">Avbryt</button></div>
 </div>
 <div id="status" role="status"></div>

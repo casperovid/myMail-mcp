@@ -4,6 +4,13 @@ import { safeErrorCategory } from "../observability";
 import type { AccountStore } from "./account-store";
 import { findDraftMismatches, type DraftExpectation } from "./draft-verify";
 import { sha256Hex } from "./draft-verify";
+import {
+	escapeHtml,
+	signedBody,
+	textToHtml,
+	appendTextSignature,
+	appendHtmlSignature,
+} from "./signature";
 import type { MailAccount } from "./types";
 import { NativeImapSession } from "./native-imap";
 import { buildDraftMessage, NativeSmtpSession, type DraftInput } from "./native-smtp";
@@ -362,7 +369,7 @@ export class MailService {
 		});
 	}
 
-	async createDraft(input: CreateDraftInput) {
+	async createDraft(input: CreateDraftInput, options: { introSigned?: boolean } = {}) {
 		const account = await this.authorizedAccount(input.accountId);
 		let draftInput: DraftInput;
 		if (input.replyToMessage) {
@@ -392,6 +399,7 @@ export class MailService {
 								),
 						)
 					: undefined;
+			const signed = signedBody(input.text, input.html);
 			const quoted =
 				input.replyToMessage.quoteOriginal === false ? undefined : quotedOriginal(parsed);
 			draftInput = {
@@ -399,15 +407,24 @@ export class MailService {
 				to: primary,
 				cc: copied,
 				subject: input.subject || prefixedSubject(parsed.subject, "Re:"),
-				text: input.text === undefined ? undefined : appendText(input.text, quoted?.text),
-				html: input.html === undefined ? undefined : appendHtml(input.html, quoted?.html),
+				text: appendText(signed.text, quoted?.text),
+				html: appendHtml(signed.html, quoted?.html),
 				inReplyTo: parsed.messageId,
 				references: messageReferences(parsed),
 			};
 		} else {
 			if (!input.to) throw new Error("Provide to or replyToMessage");
 			if (input.subject === undefined) throw new Error("Provide subject for a new draft");
-			draftInput = { ...input, to: input.to, subject: input.subject };
+			const signed = options.introSigned
+				? { text: input.text, html: input.html }
+				: signedBody(input.text, input.html);
+			draftInput = {
+				...input,
+				to: input.to,
+				subject: input.subject,
+				text: signed.text,
+				html: signed.html,
+			};
 		}
 		const draft = buildDraftMessage(`${account.name} <${account.email}>`, draftInput);
 		const location = await this.withImap(input.accountId, (session) =>
@@ -431,24 +448,22 @@ export class MailService {
 	}) {
 		const parsed = await this.parsedMessage(input.accountId, input.folder, input.uid);
 		const forwarded = forwardedOriginal(parsed);
-		const includeBothFormats = input.text === undefined && input.html === undefined;
-		return this.createDraft({
-			accountId: input.accountId,
-			to: input.to,
-			cc: input.cc,
-			bcc: input.bcc,
-			replyTo: input.replyTo,
-			subject: input.subject ?? prefixedSubject(parsed.subject, "Fwd:"),
-			text:
-				input.text !== undefined || includeBothFormats
-					? appendText(input.text, forwarded.text)
-					: undefined,
-			html:
-				input.html !== undefined || includeBothFormats
-					? appendHtml(input.html, forwarded.html)
-					: undefined,
-			attachments: input.includeAttachments === false ? undefined : draftAttachments(parsed),
-		});
+		const intro = signedBody(input.text, input.html);
+		return this.createDraft(
+			{
+				accountId: input.accountId,
+				to: input.to,
+				cc: input.cc,
+				bcc: input.bcc,
+				replyTo: input.replyTo,
+				subject: input.subject ?? prefixedSubject(parsed.subject, "Fwd:"),
+				text: appendText(intro.text, forwarded.text),
+				html: appendHtml(intro.html, forwarded.html),
+				attachments:
+					input.includeAttachments === false ? undefined : draftAttachments(parsed),
+			},
+			{ introSigned: true },
+		);
 	}
 
 	async editDraft(input: {
@@ -470,14 +485,27 @@ export class MailService {
 			if (!existing.flags.some((flag) => flag.toLowerCase() === "\\draft"))
 				throw new Error(`Message UID ${input.uid} is not marked as an IMAP draft`);
 			const parsed = await simpleParser(Buffer.from(existing.source));
+			// The signature is added only to parts the caller supplies, and only if not already there.
+			const existingHtml = typeof parsed.html === "string" ? parsed.html : undefined;
+			let text = parsed.text;
+			let html = existingHtml;
+			if (input.text !== undefined && input.html !== undefined) {
+				({ text, html } = signedBody(input.text, input.html));
+			} else if (input.html !== undefined) {
+				html = appendHtmlSignature(input.html);
+			} else if (input.text !== undefined) {
+				if (existingHtml === undefined)
+					({ text, html } = signedBody(input.text, undefined));
+				else text = appendTextSignature(input.text);
+			}
 			const draft = buildDraftMessage(`${account.name} <${account.email}>`, {
 				to: input.to ?? addressList(parsed.to),
 				cc: input.cc ?? optionalAddresses(parsed.cc),
 				bcc: input.bcc ?? optionalAddresses(parsed.bcc),
 				replyTo: input.replyTo ?? addressList(parsed.replyTo)[0],
 				subject: input.subject ?? parsed.subject ?? "",
-				text: input.text ?? parsed.text,
-				html: input.html ?? (typeof parsed.html === "string" ? parsed.html : undefined),
+				text,
+				html,
 				attachments: input.attachments ?? draftAttachments(parsed),
 				inReplyTo: parsed.inReplyTo,
 				references: normalizeReferences(parsed.references),
@@ -888,7 +916,11 @@ function quotedOriginal(parsed: ParsedMail): { text?: string; html?: string } {
 					.join("\n")
 			: undefined,
 		html:
-			typeof parsed.html === "string" ? `<blockquote>${parsed.html}</blockquote>` : undefined,
+			typeof parsed.html === "string"
+				? `<blockquote>${parsed.html}</blockquote>`
+				: parsed.text
+					? `<blockquote>${textToHtml(parsed.text)}</blockquote>`
+					: undefined,
 	};
 }
 
@@ -918,13 +950,5 @@ function appendHtml(introduction?: string, original?: string): string | undefine
 		[introduction, original]
 			.filter((value): value is string => value !== undefined)
 			.join("<br><br>") || undefined
-	);
-}
-
-function escapeHtml(value: string): string {
-	return value.replace(
-		/[&<>"']/g,
-		(character) =>
-			({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!,
 	);
 }

@@ -1,3 +1,5 @@
+import { stripSignature } from "./signature.ts";
+
 export interface DraftExpectation {
 	to: string | string[];
 	cc?: string | string[];
@@ -35,8 +37,11 @@ export function findDraftMismatches(provided: DraftExpectation, draft: DraftActu
 	checkAddresses("to");
 	checkAddresses("cc");
 	for (const field of ["subject", "text"] as const) {
-		const want = normalizeText(provided[field]);
-		const have = normalizeText(draft[field]);
+		// The server appends its signature to the stored text; the caller need not repeat it.
+		const clean = (value: string) =>
+			normalizeText(field === "text" ? stripSignature(value) : value);
+		const want = clean(provided[field]);
+		const have = clean(draft[field]);
 		if (want !== have)
 			mismatches.push(
 				`${field}: provided ${JSON.stringify(want)} but draft has ${JSON.stringify(have)}`,
