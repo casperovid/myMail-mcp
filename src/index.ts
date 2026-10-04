@@ -11,7 +11,6 @@ import { AccountStore } from "./mail/account-store";
 import { MailService } from "./mail/mail-service";
 import type { MailEnv } from "./mail/types";
 import { observeTool } from "./observability";
-import { unknownMethodResponse } from "./unknown-method";
 import { MCP_APP_MIME_TYPE, SEND_PREVIEW_HTML, SEND_PREVIEW_URI } from "./send-preview-card";
 
 const accountSelector = {
@@ -1507,31 +1506,6 @@ export class MyMCP extends McpAgent<MailEnv> {
 				}),
 		);
 
-		// TEMPORARY diagnostic: same name pattern, description, input schema and annotations as
-		// email_preview_send, but no _meta.ui / resource link and no output schema. Remove after testing.
-		this.server.registerTool(
-			"email_preview_test",
-			{
-				description:
-					"Show an approval card for sending an existing draft: displays From, To, Cc, Subject, the full plain text body, and the HTML body in a sandbox, with Send and Cancel buttons the user presses themselves. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, or email_update_message_draft. Temporary diagnostic copy that only returns the text ok.",
-				inputSchema: {
-					...accountSelector,
-					folder: z
-						.string()
-						.describe("Exact IMAP Drafts folder path returned by a draft tool."),
-					uid: z
-						.number()
-						.int()
-						.positive()
-						.describe(
-							"Draft IMAP UID returned by a draft tool; not the Message-ID header.",
-						),
-				},
-				annotations: titled("Preview Email Before Sending (test)", remoteRead),
-			},
-			async () => ({ content: [{ type: "text" as const, text: "ok" }] }),
-		);
-
 		this.server.registerTool(
 			"email_send_previewed_draft",
 			{
@@ -1626,7 +1600,7 @@ const mcpHandler = MyMCP.serve(withBasePath("/mcp"));
  * the tool name for tools/call) so client behavior can be traced with `wrangler tail`.
  * Parameters and arguments are never logged.
  */
-async function logRpcRequest(request: Request): Promise<{ id: unknown; method: string }[]> {
+async function logRpcRequest(request: Request): Promise<void> {
 	try {
 		const base = {
 			event: "mcp_rpc",
@@ -1635,34 +1609,11 @@ async function logRpcRequest(request: Request): Promise<{ id: unknown; method: s
 		};
 		if (request.method !== "POST") {
 			console.log(base);
-			return [];
+			return;
 		}
 		const body = JSON.parse(await request.clone().text());
-		const parsed: { id: unknown; method: string }[] = [];
 		for (const message of Array.isArray(body) ? body : [body]) {
-			if (typeof message?.method === "string")
-				parsed.push({ id: message.id, method: message.method });
 			const params = message?.params;
-			// TEMPORARY diagnostics: what the client announces in initialize (no tokens or auth headers).
-			if (message?.method === "initialize")
-				console.log({
-					event: "mcp_rpc_initialize",
-					clientInfo: params?.clientInfo,
-					protocolVersion: params?.protocolVersion,
-					capabilityKeys: Object.keys(params?.capabilities ?? {}),
-					extensions: params?.capabilities?.extensions ?? null,
-					userAgent: request.headers.get("user-agent"),
-				});
-			// TEMPORARY diagnostics for the server/discover probe (no authorization header, no tokens).
-			if (message?.method === "server/discover")
-				console.log({
-					event: "mcp_rpc_discover",
-					params: message.params,
-					id: message.id,
-					mcpProtocolVersion: request.headers.get("mcp-protocol-version"),
-					mcpSessionId: request.headers.get("mcp-session-id")?.slice(0, 8) ?? null,
-					userAgent: request.headers.get("user-agent"),
-				});
 			console.log({
 				...base,
 				rpcMethod: message?.method ?? (message?.result ? "(response)" : "(unknown)"),
@@ -1671,87 +1622,17 @@ async function logRpcRequest(request: Request): Promise<{ id: unknown; method: s
 				tool: message?.method === "tools/call" ? params?.name : undefined,
 			});
 		}
-		return parsed;
 	} catch {
 		console.log({ event: "mcp_rpc", httpMethod: request.method, rpcMethod: "(unparseable)" });
-		return [];
-	}
-}
-
-const TRACED_RESPONSES = new Set(["initialize", "tools/list", "resources/list"]);
-const DIAGNOSTIC_TOOLS = new Set(["email_preview_send", "email_preview_test"]);
-
-/**
- * TEMPORARY diagnostics: logs what initialize, tools/list and resources/list actually return
- * (capabilities, preview tool metadata, resource entries). No tokens or mailbox data are in
- * these responses. Remove once the card rendering issue is resolved.
- */
-async function logRpcResponse(
-	response: Response,
-	requests: { id: unknown; method: string }[],
-): Promise<void> {
-	try {
-		const raw = await response.text();
-		const payloads = raw
-			.split("\n")
-			.filter((line) => line.startsWith("data:"))
-			.map((line) => line.slice(5).trim());
-		if (!payloads.length && raw.trim()) payloads.push(raw.trim());
-		for (const payload of payloads) {
-			const message = JSON.parse(payload);
-			const method = requests.find((entry) => entry.id === message?.id)?.method;
-			const result = message?.result;
-			if (!result || !method) continue;
-			if (method === "initialize")
-				console.log({
-					event: "mcp_rpc_response",
-					rpcMethod: method,
-					protocolVersion: result.protocolVersion,
-					serverInfo: result.serverInfo,
-					capabilities: result.capabilities,
-				});
-			else if (method === "tools/list")
-				console.log({
-					event: "mcp_rpc_response",
-					rpcMethod: method,
-					toolCount: result.tools?.length,
-					toolNames: result.tools?.map((tool: any) => tool.name),
-					diagnosticTools: result.tools
-						?.filter((tool: any) => DIAGNOSTIC_TOOLS.has(tool.name))
-						.map((tool: any) => ({
-							name: tool.name,
-							_meta: tool._meta ?? null,
-							annotations: tool.annotations,
-							inputSchemaKeys: Object.keys(tool.inputSchema ?? {}),
-							outputSchemaKeys: Object.keys(tool.outputSchema ?? {}),
-						})),
-				});
-			else if (method === "resources/list")
-				console.log({
-					event: "mcp_rpc_response",
-					rpcMethod: method,
-					resources: result.resources,
-				});
-		}
-	} catch {
-		console.log({ event: "mcp_rpc_response", status: "unparseable" });
 	}
 }
 
 export default {
 	async fetch(request: Request, env: MailEnv, ctx: ExecutionContext): Promise<Response> {
 		return handleRequest(request, env, {
-			mcp: async () => {
-				const requests = await logRpcRequest(request);
-				const unknown = await unknownMethodResponse(request);
-				if (unknown) {
-					console.log({ event: "mcp_rpc_unknown_method", status: unknown.status });
-					return unknown;
-				}
-				const response = await mcpHandler.fetch(request, env, ctx);
-				if (requests.some((entry) => TRACED_RESPONSES.has(entry.method)))
-					ctx.waitUntil(logRpcResponse(response.clone(), requests));
-				return response;
+			mcp: () => {
+				ctx.waitUntil(logRpcRequest(request));
+				return mcpHandler.fetch(request, env, ctx);
 			},
 			app: () => app.fetch(request, env, ctx),
 		});
