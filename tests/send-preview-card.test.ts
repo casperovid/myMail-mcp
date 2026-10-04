@@ -45,7 +45,7 @@ console.log("ok");
 // The URI must come from the one constant everywhere in index.ts (resource and both _meta links).
 const { readFileSync } = await import("node:fs");
 const indexSource = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
-assert.doesNotMatch(indexSource, /send-preview/);
+assert.doesNotMatch(indexSource, /ui:\/\/email/);
 assert.match(indexSource, /resourceUri: SEND_PREVIEW_URI/);
 assert.match(indexSource, /"ui\/resourceUri": SEND_PREVIEW_URI/);
 assert.match(indexSource, /registerResource\(\s*"email_send_preview_card",\s*SEND_PREVIEW_URI/);
