@@ -14,7 +14,15 @@ const script = /<script>([\s\S]*)<\/script>/.exec(SEND_PREVIEW_HTML)?.[1];
 assert.ok(script);
 new Function(script);
 assert.doesNotMatch(script, /innerHTML|outerHTML|document\.write/);
-assert.match(SEND_PREVIEW_HTML, /<iframe[^>]*sandbox=""/);
+// Sandboxed without scripts; allow-same-origin only lets the card measure the content height.
+assert.match(SEND_PREVIEW_HTML, /<iframe[^>]*sandbox="allow-same-origin"/);
+assert.doesNotMatch(SEND_PREVIEW_HTML, /allow-scripts|allow-popups|allow-top-navigation/);
+assert.match(script, /default-src \\'none\\'/);
+assert.match(script, /Math\.min\([^)]*600\)/);
+assert.match(script, /host-context-changed/);
+assert.match(script, /hostContext/);
+assert.match(SEND_PREVIEW_HTML, /prefers-color-scheme: dark/);
+assert.match(SEND_PREVIEW_HTML, /<details id="textBox" hidden>/);
 assert.match(script, /appInfo/);
 assert.doesNotMatch(script, /clientInfo/);
 assert.match(script, /ui\/notifications\/size-changed/);
@@ -29,5 +37,3 @@ assert.equal(
 );
 assert.notEqual(await sha256Hex(new Uint8Array([1])), await sha256Hex(new Uint8Array([2])));
 console.log("ok");
-
-assert.match(SEND_PREVIEW_HTML, /<details id="htmlBox" hidden open>/);

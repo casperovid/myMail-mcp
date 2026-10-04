@@ -12,6 +12,20 @@ const signatureTail = new RegExp(
 		.join("\\s+")}\\s*$`,
 );
 
+/** Wrapper around the HTML bodies this server composes, so recipients see the same font. */
+const BODY_WRAPPER_OPEN = '<div style="font-family: Helvetica, Arial, sans-serif;">';
+
+/** Wraps a composed HTML body once. Drafts from elsewhere are never passed through this. */
+export function wrapHtmlBody(html: string): string {
+	return html.startsWith(BODY_WRAPPER_OPEN) ? html : `${BODY_WRAPPER_OPEN}${html}</div>`;
+}
+
+function unwrapHtmlBody(html: string): string {
+	return html.startsWith(BODY_WRAPPER_OPEN) && html.endsWith("</div>")
+		? html.slice(BODY_WRAPPER_OPEN.length, -"</div>".length)
+		: html;
+}
+
 const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
 
 export function hasTextSignature(text: string): boolean {
@@ -37,6 +51,7 @@ export function appendTextSignature(text: string): string {
 /** Appends the HTML signature after exactly one blank line, unless the HTML already has it. */
 export function appendHtmlSignature(html: string): string {
 	if (hasHtmlSignature(html)) return html;
+	html = unwrapHtmlBody(html);
 	// SIGNATURE_HTML starts with its own <br>, so one more <br> makes the blank line.
 	return `${html.replace(/(?:<br\s*\/?>|\s)+$/i, "")}<br>${SIGNATURE_HTML}`;
 }
@@ -82,6 +97,7 @@ export function signedBody(
 	html: string | undefined,
 ): { text: string; html: string } {
 	const plain = text ?? (html !== undefined ? htmlToText(html) : "");
-	const markup = html ?? textToHtml(stripSignature(text ?? ""));
+	const markup =
+		html !== undefined ? unwrapHtmlBody(html) : textToHtml(stripSignature(text ?? ""));
 	return { text: appendTextSignature(plain), html: appendHtmlSignature(markup) };
 }

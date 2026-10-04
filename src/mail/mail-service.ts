@@ -10,6 +10,7 @@ import {
 	textToHtml,
 	appendTextSignature,
 	appendHtmlSignature,
+	wrapHtmlBody,
 } from "./signature";
 import type { MailAccount } from "./types";
 import { NativeImapSession } from "./native-imap";
@@ -426,6 +427,7 @@ export class MailService {
 				html: signed.html,
 			};
 		}
+		if (draftInput.html !== undefined) draftInput.html = wrapHtmlBody(draftInput.html);
 		const draft = buildDraftMessage(`${account.name} <${account.email}>`, draftInput);
 		const location = await this.withImap(input.accountId, (session) =>
 			session.createDraft(draft.source, draft.messageId),
@@ -490,13 +492,17 @@ export class MailService {
 			let text = parsed.text;
 			let html = existingHtml;
 			if (input.text !== undefined && input.html !== undefined) {
-				({ text, html } = signedBody(input.text, input.html));
+				const signed = signedBody(input.text, input.html);
+				text = signed.text;
+				html = wrapHtmlBody(signed.html);
 			} else if (input.html !== undefined) {
-				html = appendHtmlSignature(input.html);
+				html = wrapHtmlBody(appendHtmlSignature(input.html));
 			} else if (input.text !== undefined) {
-				if (existingHtml === undefined)
-					({ text, html } = signedBody(input.text, undefined));
-				else text = appendTextSignature(input.text);
+				if (existingHtml === undefined) {
+					const signed = signedBody(input.text, undefined);
+					text = signed.text;
+					html = wrapHtmlBody(signed.html);
+				} else text = appendTextSignature(input.text);
 			}
 			const draft = buildDraftMessage(`${account.name} <${account.email}>`, {
 				to: input.to ?? addressList(parsed.to),

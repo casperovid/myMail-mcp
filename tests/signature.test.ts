@@ -9,6 +9,7 @@ import {
 	htmlToText,
 	signedBody,
 	stripSignature,
+	wrapHtmlBody,
 	textToHtml,
 } from "../src/mail/signature.ts";
 
@@ -64,3 +65,15 @@ const source = new TextDecoder().decode(
 );
 assert.match(source, /Content-Type: multipart\/alternative/);
 assert.ok(source.indexOf("text/plain") < source.indexOf("text/html"));
+
+// Composed HTML is wrapped once in the font div; the signature is unchanged and still detected.
+const wrapped = wrapHtmlBody(once.html);
+assert.ok(wrapped.startsWith('<div style="font-family: Helvetica, Arial, sans-serif;">'));
+assert.ok(wrapped.endsWith("</div>"));
+assert.ok(wrapped.includes(SIGNATURE_HTML));
+assert.doesNotMatch(wrapped, /color/i);
+assert.equal(wrapHtmlBody(wrapped), wrapped);
+assert.equal(appendHtmlSignature(wrapped), wrapped);
+assert.equal(signedBody(undefined, wrapped).html, once.html);
+const unsignedWrapped = wrapHtmlBody("Hei");
+assert.equal(wrapHtmlBody(appendHtmlSignature(unsignedWrapped)), wrapped);
