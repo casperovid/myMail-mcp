@@ -14,6 +14,7 @@ import { observeTool, safeErrorCategory } from "./observability";
 import {
 	attachmentDisposition,
 	createAttachmentLink,
+	createAttachmentToken,
 	DOWNLOAD_PREFIX,
 	openAttachmentLink,
 } from "./attachment-link";
@@ -1543,42 +1544,42 @@ export class MyMCP extends McpAgent<MailEnv> {
 			}),
 		);
 
+		const attachmentInput = {
+			...accountSelector,
+			folder: z
+				.string()
+				.default("INBOX")
+				.describe(
+					"Exact IMAP folder path returned by email_list_folders; defaults to INBOX.",
+				),
+			uid: z
+				.number()
+				.int()
+				.positive()
+				.describe(
+					"IMAP UID returned by search/get/thread results; not the email Message-ID header.",
+				),
+			attachmentIndex: z
+				.number()
+				.int()
+				.nonnegative()
+				.describe("Zero-based attachmentIndex returned by email_get_message."),
+		};
+
 		this.server.registerTool(
 			"email_preview_attachment",
 			{
 				description:
-					"Show the user a card with one email attachment: file name, type, size, an image preview (png, jpeg, gif, webp; large images are scaled down to at most 1568 px) and a Download button with a signed link that expires after 15 minutes. Requires accountId when needed, exact folder path, IMAP UID, and attachmentIndex returned by email_get_message. The user sees the card; Claude does not receive the file contents or the link. Side effects: none on the mailbox. Non-image attachments get a card with file name and Download button only. Use email_get_message_attachment instead when you need to hand the user a plain download link. Do not use to read message text or to search for messages.",
-				inputSchema: {
-					...accountSelector,
-					folder: z
-						.string()
-						.default("INBOX")
-						.describe(
-							"Exact IMAP folder path returned by email_list_folders; defaults to INBOX.",
-						),
-					uid: z
-						.number()
-						.int()
-						.positive()
-						.describe(
-							"IMAP UID returned by search/get/thread results; not the email Message-ID header.",
-						),
-					attachmentIndex: z
-						.number()
-						.int()
-						.nonnegative()
-						.describe("Zero-based attachmentIndex returned by email_get_message."),
-				},
+					"Show the user a card with one email attachment: file name, type, size, an image preview (png, jpeg, gif, webp; large images are scaled down to at most 1024 px) and a Download button with a signed link that expires after 15 minutes. Requires accountId when needed, exact folder path, IMAP UID, and attachmentIndex returned by email_get_message. The card fetches the attachment itself, so this tool answers immediately and does not check that the attachment exists; the user sees the card and Claude does not receive the file contents or the download link. Side effects: none on the mailbox. Non-image attachments get a card with file name and Download button only. Use email_get_message_attachment instead when you need to hand the user a plain download link. Do not use to read message text or to search for messages.",
+				inputSchema: attachmentInput,
 				outputSchema: {
 					accountId: z.string().optional(),
 					folder: z.string(),
 					uid: z.number().int(),
 					attachmentIndex: z.number().int(),
-					filename: z.string().optional(),
-					contentType: z.string(),
-					size: z.number().int(),
-					imageShown: z.boolean(),
-					imageResized: z.boolean(),
+					cardToken: z
+						.string()
+						.describe("Signed 15-minute token the card uses to fetch the attachment."),
 					expiresAt: z.string(),
 				},
 				annotations: titled("Preview Email Attachment", remoteRead),
@@ -1589,30 +1590,19 @@ export class MyMCP extends McpAgent<MailEnv> {
 			},
 			async ({ accountId, folder, uid, attachmentIndex }: any) =>
 				observeTool("email_preview_attachment", async () => {
-					const file = await mail.getAttachmentFile(
-						accountId,
-						folder,
-						uid,
-						attachmentIndex,
-					);
-					const link = await createAttachmentLink(env, {
+					const { token, expiresAt } = await createAttachmentToken(env, {
 						accountId,
 						folder,
 						uid,
 						attachmentIndex,
 					});
-					const image = await previewImage(env.IMAGES, file.contentType, file.content);
 					const structured = {
 						accountId,
 						folder,
 						uid,
 						attachmentIndex,
-						filename: file.filename,
-						contentType: file.contentType,
-						size: file.content.byteLength,
-						imageShown: image !== undefined,
-						imageResized: image?.resized ?? false,
-						expiresAt: link.expiresAt,
+						cardToken: token,
+						expiresAt,
 					};
 					return {
 						content: [
@@ -1620,8 +1610,11 @@ export class MyMCP extends McpAgent<MailEnv> {
 								type: "text" as const,
 								text: JSON.stringify(
 									{
-										...structured,
-										note: "A card with the attachment is shown to the user. The file contents and download link are not included here.",
+										folder,
+										uid,
+										attachmentIndex,
+										expiresAt,
+										note: "A card with the attachment is shown to the user. The card fetches the file itself; the file contents and download link are not included here.",
 									},
 									null,
 									2,
@@ -1629,12 +1622,68 @@ export class MyMCP extends McpAgent<MailEnv> {
 							},
 						],
 						structuredContent: structured,
-						// _meta goes to the card only: the signed link and the image (as base64).
-						_meta: {
-							downloadUrl: link.downloadUrl,
-							expiresAt: link.expiresAt,
-							image: image && { mimeType: image.mimeType, base64: image.base64 },
-						},
+					};
+				}),
+		);
+
+		this.server.registerTool(
+			"email_get_attachment_preview",
+			{
+				description:
+					"App-only: called by the email_preview_attachment card, never by the model. Fetches the attachment named by the signed card token and returns its file name, type, size, a signed download link, and for png, jpeg, gif and webp an image preview scaled to at most 1024 px as base64. Side effects: none; fails if the token is invalid or expired or the attachment does not exist.",
+				inputSchema: {
+					cardToken: z
+						.string()
+						.min(20)
+						.describe(
+							"Signed token delivered to the card by email_preview_attachment.",
+						),
+				},
+				outputSchema: {
+					filename: z.string().optional(),
+					contentType: z.string(),
+					size: z.number().int(),
+					downloadUrl: z.string(),
+					expiresAt: z.string(),
+					imageResized: z.boolean(),
+					image: z.object({ mimeType: z.string(), base64: z.string() }).optional(),
+				},
+				annotations: titled("Fetch Attachment Preview For Card", remoteRead),
+				_meta: appOnlyMeta,
+			},
+			async ({ cardToken }: any) =>
+				observeTool("email_get_attachment_preview", async () => {
+					const ref = await openAttachmentLink(env, cardToken);
+					if (!ref)
+						throw new Error(
+							"The card token is invalid or expired; ask for a new preview.",
+						);
+					const file = await mail.getAttachmentFile(
+						ref.accountId,
+						ref.folder,
+						ref.uid,
+						ref.attachmentIndex,
+					);
+					const link = await createAttachmentLink(env, ref);
+					const image = await previewImage(env.IMAGES, file.contentType, file.content);
+					const structured = {
+						filename: file.filename,
+						contentType: file.contentType,
+						size: file.content.byteLength,
+						downloadUrl: link.downloadUrl,
+						expiresAt: link.expiresAt,
+						imageResized: image?.resized ?? false,
+						image: image && { mimeType: image.mimeType, base64: image.base64 },
+					};
+					return {
+						// The image and link are only in structuredContent, which goes to the card.
+						content: [
+							{
+								type: "text" as const,
+								text: "Attachment preview delivered to the card.",
+							},
+						],
+						structuredContent: structured,
 					};
 				}),
 		);

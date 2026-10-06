@@ -560,13 +560,17 @@ parts; base64 is only required for attachment bytes.
 ### Attachment card (MCP Apps)
 
 `email_preview_attachment` (`folder`, `uid`, `attachmentIndex`) shows the user a card (`ui://email/attachment-preview-<hash>.html`)
-with the file name, type, size, an image preview and a Download button. The signed 15-minute download link and the
-image go to the card only (tool result `_meta`), not to Claude. For png, jpeg, gif and webp the card shows the image
-as it is when it is within 1568 px and about 1 MB; larger images are scaled down with the Cloudflare Images binding
-(`IMAGES`, `[images]` in `wrangler.toml`) to at most 1568 px as JPEG, quality 80, on a white background. If the
-binding fails, the result is still too large, or the attachment is not an image, the card shows the file name and the
-Download button only. The button asks the host to open the link (`ui/open-link`); if the host cannot, the link is
-shown as text. `email_get_message_attachment` still returns a plain signed download link for Claude to pass on.
+with the file name, type, size, an image preview and a Download button. The tool answers immediately with a signed
+15-minute `cardToken` (it does not read the mailbox). The card then fetches the attachment itself with the app-only tool
+`email_get_attachment_preview` (registered with `visibility: ["app"]`, like the send card's Send/Cancel tools), so the
+image and the signed download link reach the card through that tool's `structuredContent`, not through the preview
+tool's `_meta`. For png, jpeg, gif and webp the card shows the image as it is when it is within 1024 px and about
+300 kB; larger images are scaled down with the Cloudflare Images binding (`IMAGES`, `[images]` in `wrangler.toml`) to at
+most 1024 px as JPEG, quality 75, on a white background. If the binding fails, the result is still too large, or the
+attachment is not an image, the card shows the file name and the Download button only. The button asks the host to
+open the link (`ui/open-link`); if the host cannot, the link is shown as text. The card has a temporary diagnostics
+panel that lists received field names and lengths only. `email_get_message_attachment` still returns a plain signed
+download link for Claude to pass on.
 
 ### Signature
 

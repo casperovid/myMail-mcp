@@ -3,10 +3,10 @@ import { Buffer } from "node:buffer";
 /** Image types the attachment card can show. SVG is deliberately not included. */
 export const PREVIEW_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 export const MAX_INPUT_BYTES = 20 * 1024 * 1024; // Images binding input limit
-export const MAX_SIDE = 1568;
-export const PASS_THROUGH_BYTES = 1_000_000;
-export const MAX_PREVIEW_BYTES = 2_000_000;
-export const JPEG_QUALITY = 80;
+export const MAX_SIDE = 1024;
+export const PASS_THROUGH_BYTES = 300_000;
+export const MAX_PREVIEW_BYTES = 1_000_000;
+export const JPEG_QUALITY = 75;
 
 export interface PreviewImage {
 	mimeType: string;

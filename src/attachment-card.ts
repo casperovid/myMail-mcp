@@ -1,11 +1,13 @@
 import { shortHash } from "./send-preview-card.ts";
 
 /**
- * Self-contained MCP Apps card for one message attachment: file name, type, size, the image
- * (an inline data: URL delivered in the tool result _meta, allowed by the default CSP) and a
- * download button that asks the host to open the signed link (ui/open-link).
+ * Self-contained MCP Apps card for one message attachment. It receives a signed cardToken in
+ * the tool result, then fetches the attachment itself with the app-only tool
+ * email_get_attachment_preview (like the send card calls its Send/Cancel tools) and shows file
+ * name, type, size, the image (inline data: URL, allowed by the default CSP) and a download
+ * button that asks the host to open the signed link (ui/open-link).
  * All content is inserted with textContent; the image source is only built from an allowlisted
- * image mime type and a base64 string.
+ * image mime type and a base64 string. The diagnostics panel lists field names and lengths only.
  */
 export const ATTACHMENT_PREVIEW_HTML = /* html */ `<!doctype html>
 <html lang="nb">
@@ -28,6 +30,8 @@ export const ATTACHMENT_PREVIEW_HTML = /* html */ `<!doctype html>
 	button { font:inherit; padding:7px 16px; border-radius:6px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
 	#fallback { margin-top:10px; overflow-wrap:anywhere; user-select:all; font-size:12px; }
 	#status { margin-top:10px; } .error { color:var(--danger); }
+	#diag { margin-top:14px; color:var(--muted); font-size:12px; }
+	#diagText { white-space:pre-wrap; overflow-wrap:anywhere; margin:6px 0 0; font:11px/1.4 ui-monospace, monospace; }
 </style>
 </head>
 <body>
@@ -41,6 +45,7 @@ export const ATTACHMENT_PREVIEW_HTML = /* html */ `<!doctype html>
 	<div id="fallback" hidden></div>
 </div>
 <div id="status" role="status"></div>
+<details id="diag" open><summary>Diagnostikk (kun feltnavn og lengder)</summary><pre id="diagText"></pre></details>
 <script>
 (() => {
 	const $ = (id) => document.getElementById(id);
@@ -61,6 +66,7 @@ export const ATTACHMENT_PREVIEW_HTML = /* html */ `<!doctype html>
 		if (event.source !== window.parent) return;
 		const message = event.data;
 		if (!message || message.jsonrpc !== "2.0") return;
+		if (message.method) countMethod(message.method);
 		if (message.id !== undefined && !message.method) {
 			const entry = pending.get(message.id);
 			if (!entry) return;
@@ -82,19 +88,19 @@ export const ATTACHMENT_PREVIEW_HTML = /* html */ `<!doctype html>
 		return (bytes / 1024 / 1024).toFixed(1) + " MB";
 	}
 
-	function render(result) {
-		const data = result.structuredContent || {};
-		const meta = result._meta || {};
-		if (result.isError) {
-			setStatus("Kunne ikke hente vedlegget. Se samtalen for detaljer.", "error");
-			return;
-		}
-		$("empty").hidden = true;
-		$("card").hidden = false;
+	// Diagnostics: field names and lengths only, never message or file content.
+	const seen = {};
+	const lines = {};
+	const diag = (key, value) => { lines[key] = value; $("diagText").textContent = Object.keys(lines).map((k) => k + ": " + lines[k]).join("\\n"); reportSize(); };
+	const keys = (value) => value && typeof value === "object" ? "[" + Object.keys(value).join(", ") + "]" : String(value);
+	const countMethod = (method) => { seen[method] = (seen[method] || 0) + 1; diag("meldinger fra vert", Object.keys(seen).map((m) => m + " x" + seen[m]).join(", ")); };
+
+	function showAttachment(data) {
 		$("name").textContent = data.filename || "(uten filnavn)";
 		$("meta").textContent = [data.contentType, formatSize(data.size)].filter(Boolean).join(" · ");
-		const image = meta.image;
+		const image = data.image;
 		const imageOk = image && /^image\\/(png|jpeg|gif|webp)$/.test(image.mimeType) && /^[A-Za-z0-9+/=]+$/.test(image.base64 || "");
+		diag("bilde", image ? "mimeType=" + image.mimeType + ", base64-lengde=" + (image.base64 || "").length + ", godkjent=" + imageOk + ", skalert=" + data.imageResized : "ingen");
 		if (imageOk) {
 			$("image").alt = data.filename || "";
 			$("image").addEventListener("load", reportSize);
@@ -104,9 +110,42 @@ export const ATTACHMENT_PREVIEW_HTML = /* html */ `<!doctype html>
 			$("note").textContent = "Forhåndsvisning er ikke tilgjengelig for dette vedlegget.";
 			$("note").hidden = false;
 		}
-		downloadUrl = typeof meta.downloadUrl === "string" ? meta.downloadUrl : null;
+		downloadUrl = typeof data.downloadUrl === "string" ? data.downloadUrl : null;
+		diag("nedlastingslenke-lengde", downloadUrl ? downloadUrl.length : "mangler");
 		$("download").disabled = !downloadUrl;
 		if (!downloadUrl) setStatus("Mangler nedlastingslenke; be om en ny forhåndsvisning.", "error");
+	}
+
+	async function render(result) {
+		const data = result.structuredContent || {};
+		diag("tool-result params", keys(result));
+		diag("tool-result structuredContent", keys(result.structuredContent));
+		diag("tool-result _meta", keys(result._meta));
+		diag("cardToken", typeof data.cardToken === "string" ? "lengde " + data.cardToken.length : "mangler");
+		if (result.isError) {
+			setStatus("Kunne ikke vise vedlegget. Se samtalen for detaljer.", "error");
+			return;
+		}
+		$("empty").hidden = true;
+		$("card").hidden = false;
+		$("name").textContent = "Henter vedlegg …";
+		if (typeof data.cardToken !== "string") {
+			setStatus("Mangler token fra verktøyet; be om en ny forhåndsvisning.", "error");
+			return;
+		}
+		try {
+			const response = await request("tools/call", { name: "email_get_attachment_preview", arguments: { cardToken: data.cardToken } });
+			diag("app-verktøy svar", keys(response) + ", structuredContent=" + keys(response && response.structuredContent) + ", isError=" + Boolean(response && response.isError));
+			if (response.isError) {
+				const detail = (response.content || []).map((c) => c.text).filter(Boolean).join(" ");
+				throw new Error(detail || "Verktøyet feilet");
+			}
+			showAttachment(response.structuredContent || {});
+		} catch (error) {
+			$("name").textContent = "Vedlegget kunne ikke hentes";
+			diag("app-verktøy feil", error.message);
+			setStatus(error.message, "error");
+		}
 		reportSize();
 	}
 
@@ -117,6 +156,7 @@ export const ATTACHMENT_PREVIEW_HTML = /* html */ `<!doctype html>
 		} catch (error) {
 			$("fallback").textContent = downloadUrl;
 			$("fallback").hidden = false;
+			diag("ui/open-link", "feilet: " + error.message);
 			setStatus("Kunne ikke åpne lenken automatisk. Kopier den og åpne den i nettleseren (gyldig i 15 minutter).", "error");
 		}
 	});

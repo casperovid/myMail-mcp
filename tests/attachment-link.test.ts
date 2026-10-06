@@ -3,6 +3,7 @@ import {
 	DOWNLOAD_PREFIX,
 	attachmentDisposition,
 	createAttachmentLink,
+	createAttachmentToken,
 	openAttachmentLink,
 } from "../src/attachment-link.ts";
 import { takeBytes } from "../src/mail/byte-reader.ts";
@@ -41,6 +42,11 @@ assert.equal(
 	),
 	undefined,
 );
+
+// The card token is the same sealed token, so the app-only tool and the link accept it alike.
+const cardToken = await createAttachmentToken(env, ref);
+assert.deepEqual(await openAttachmentLink(env, cardToken.token), ref);
+assert.ok(cardToken.token.length >= 20);
 
 // Default base URL when the variable is missing.
 assert.match(

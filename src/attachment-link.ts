@@ -22,10 +22,10 @@ type Claims = AttachmentRef & { typ: "dl"; exp: number };
 const now = () => Math.floor(Date.now() / 1000);
 
 /** The token is AES-GCM sealed with CREDENTIAL_ENCRYPTION_KEY, so it cannot be forged or edited. */
-export async function createAttachmentLink(
+export async function createAttachmentToken(
 	env: LinkEnv,
 	ref: AttachmentRef,
-): Promise<{ downloadUrl: string; expiresAt: string }> {
+): Promise<{ token: string; expiresAt: string }> {
 	const exp = now() + DOWNLOAD_TTL_SECONDS;
 	const claims: Claims = {
 		typ: "dl",
@@ -35,12 +35,19 @@ export async function createAttachmentLink(
 		uid: ref.uid,
 		attachmentIndex: ref.attachmentIndex,
 	};
-	const token = await sealJson(claims, env.CREDENTIAL_ENCRYPTION_KEY);
-	const base = (env.PUBLIC_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
 	return {
-		downloadUrl: `${base}${DOWNLOAD_PREFIX}${token}`,
+		token: await sealJson(claims, env.CREDENTIAL_ENCRYPTION_KEY),
 		expiresAt: new Date(exp * 1000).toISOString(),
 	};
+}
+
+export async function createAttachmentLink(
+	env: LinkEnv,
+	ref: AttachmentRef,
+): Promise<{ downloadUrl: string; expiresAt: string }> {
+	const { token, expiresAt } = await createAttachmentToken(env, ref);
+	const base = (env.PUBLIC_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
+	return { downloadUrl: `${base}${DOWNLOAD_PREFIX}${token}`, expiresAt };
 }
 
 /** Returns the attachment reference, or undefined for a bad, edited, wrong-type, or expired token. */

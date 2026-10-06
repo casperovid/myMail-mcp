@@ -23,6 +23,13 @@ assert.doesNotMatch(script, /innerHTML|outerHTML|document\.write|eval\(/);
 assert.match(script, /appInfo/);
 assert.match(script, /ui\/notifications\/size-changed/);
 assert.match(script, /ui\/open-link/);
+// The card fetches the attachment itself with the app-only tool; link and image never come from _meta.
+assert.match(script, /email_get_attachment_preview/);
+assert.match(script, /cardToken/);
+assert.doesNotMatch(script, /meta\.(image|downloadUrl)|result\._meta\.(image|downloadUrl)/);
+// Diagnostics panel lists names and lengths only.
+assert.match(ATTACHMENT_PREVIEW_HTML, /id="diagText"/);
+assert.doesNotMatch(script, /diag\([^)]*base64\)/);
 assert.match(script, /host-context-changed/);
 assert.match(script, /\^image\\\/\(png\|jpeg\|gif\|webp\)\$/); // image mime allowlist, no svg
 assert.doesNotMatch(ATTACHMENT_PREVIEW_HTML, /<(script|link)[^>]+(src|href)=/i);
@@ -33,6 +40,19 @@ const indexSource = readFileSync(new URL("../src/index.ts", import.meta.url), "u
 assert.match(indexSource, /resourceUri: ATTACHMENT_PREVIEW_URI/);
 assert.match(indexSource, /"ui\/resourceUri": ATTACHMENT_PREVIEW_URI/);
 assert.match(indexSource, /"email_preview_attachment"/);
+assert.match(indexSource, /"email_get_attachment_preview"/);
+// The preview tool answers with a token only; it neither reads the mailbox nor sends _meta.
+const previewTool = indexSource.slice(
+	indexSource.indexOf('"email_preview_attachment",'),
+	indexSource.indexOf('"email_get_attachment_preview",'),
+);
+assert.doesNotMatch(previewTool, /getAttachmentFile|previewImage|_meta: \{[^}]*image/);
+// The app-only tool is hidden from the model (host-enforced) and uses structuredContent for the image.
+const appTool = indexSource.slice(
+	indexSource.indexOf('"email_get_attachment_preview",'),
+	indexSource.indexOf('"email_send_previewed_draft",'),
+);
+assert.match(appTool, /_meta: appOnlyMeta/);
 
 // --- image preparation with a fake Images binding ---
 const bytes = (size: number) => new Uint8Array(size).fill(7);
@@ -83,7 +103,7 @@ assert.equal(unchanged?.resized, false);
 assert.equal(unchanged?.base64, Buffer.from(bytes(5000)).toString("base64"));
 assert.equal(small.calls.length, 0);
 
-// Large dimensions or bytes: scaled to JPEG, 1568 px, white background, quality 80.
+// Large dimensions or bytes: scaled to JPEG, 1024 px, white background, quality 75.
 const big = fakeImages({ width: 4000, height: 3000, outputSize: 400_000 });
 const scaled = await previewImage(big.binding, "image/png", bytes(6_698_858));
 assert.equal(scaled?.mimeType, "image/jpeg");
@@ -95,7 +115,8 @@ assert.deepEqual(big.calls[0].transform, {
 	background: "#ffffff",
 });
 assert.equal(big.calls[1].output.format, "image/jpeg");
-assert.equal(big.calls[1].output.quality, 80);
+assert.equal(MAX_SIDE, 1024);
+assert.equal(big.calls[1].output.quality, 75);
 const heavy = fakeImages({ width: 1000, height: 1000, outputSize: 400_000 });
 assert.equal(
 	(await previewImage(heavy.binding, "image/webp", bytes(PASS_THROUGH_BYTES + 1)))?.resized,
