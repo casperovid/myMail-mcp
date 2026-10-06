@@ -297,13 +297,14 @@ export class MailService {
 		});
 	}
 
-	async getAttachment(
+	/** Raw bytes of one attachment, for the signed download route. */
+	async getAttachmentFile(
 		accountId: string | undefined,
 		folder: string,
 		uid: number,
 		attachmentIndex: number,
 	) {
-		return this.withImap(accountId, async (session, account) => {
+		return this.withImap(accountId, async (session) => {
 			const message = await session.getMessage(folder, uid);
 			const parsed = await simpleParser(Buffer.from(message.source));
 			const attachment = parsed.attachments[attachmentIndex];
@@ -312,15 +313,9 @@ export class MailService {
 					`Attachment index ${attachmentIndex} was not found on message UID ${uid}`,
 				);
 			return {
-				accountId: account.id,
-				folder,
-				uid,
-				attachmentIndex,
 				filename: attachment.filename,
 				contentType: attachment.contentType,
-				size: attachment.size,
-				contentId: attachment.cid,
-				contentBase64: attachment.content.toString("base64"),
+				content: new Uint8Array(attachment.content),
 			};
 		});
 	}

@@ -508,7 +508,12 @@ full message content is required.
 and `UIDVALIDITY` values for one folder.
 
 `email_get_message` includes a zero-based `attachmentIndex` for every attachment. Pass the folder, IMAP UID,
-and index to `email_get_message_attachment` to retrieve its raw bytes as `contentBase64`.
+and index to `email_get_message_attachment`. It does not return the file: it returns a signed `downloadUrl`
+(`<PUBLIC_BASE_URL>/myMail/download/<token>`) and `expiresAt`. The link is valid for 15 minutes, can be opened
+several times until then, and needs no login (the AES-GCM sealed token is the credential). It is not checked when
+created; an unknown message or index, a bad token, or an expired link all answer 404. The download sends the original
+file as an attachment (`Content-Disposition: attachment`, `nosniff`, `no-store`). Set `PUBLIC_BASE_URL` in
+`wrangler.toml` to the public origin of the Worker.
 
 IMAP configuration is required for every account. SMTP is optional; accounts without it can read,
 search, draft, and manage mail but cannot use `email_send_draft`. `email_list_accounts` reports

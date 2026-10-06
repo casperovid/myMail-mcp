@@ -1,4 +1,5 @@
 import { connect } from "cloudflare:sockets";
+import { takeBytes } from "./byte-reader";
 import { decodeHeaderWords } from "./mime";
 import type { MailAccount } from "./types";
 
@@ -458,9 +459,12 @@ export class NativeImapSession {
 	}
 
 	private async readBytes(length: number): Promise<Uint8Array> {
-		while (this.buffered.length < length) await this.readChunk();
-		const value = this.buffered.slice(0, length);
-		this.buffered = this.buffered.slice(length);
+		const { value, rest } = await takeBytes(this.buffered, length, async () => {
+			const { done, value } = await this.reader!.read();
+			if (done) throw new Error("IMAP server closed the connection");
+			return value;
+		});
+		this.buffered = rest;
 		return value;
 	}
 

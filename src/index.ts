@@ -10,7 +10,13 @@ import app from "./app";
 import { AccountStore } from "./mail/account-store";
 import { MailService } from "./mail/mail-service";
 import type { MailEnv } from "./mail/types";
-import { observeTool } from "./observability";
+import { observeTool, safeErrorCategory } from "./observability";
+import {
+	attachmentDisposition,
+	createAttachmentLink,
+	DOWNLOAD_PREFIX,
+	openAttachmentLink,
+} from "./attachment-link";
 import { MCP_APP_MIME_TYPE, SEND_PREVIEW_HTML, SEND_PREVIEW_URI } from "./send-preview-card";
 
 const accountSelector = {
@@ -776,7 +782,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			["email_get_message_attachment"],
 			{
 				description:
-					"Get, retrieve, open, or download one attachment from a message as base64. Requires accountId when needed, exact folder path, IMAP UID, and attachmentIndex returned by email_get_message. Returns attachment metadata and contentBase64 containing raw attachment bytes. Do not use to get message text, HTML, or to search for messages.",
+					"Get a download link for one attachment of a message. Requires accountId when needed, exact folder path, IMAP UID, and attachmentIndex returned by email_get_message. Returns downloadUrl (a signed link to the original file that expires after 15 minutes and can be opened several times until then) and expiresAt. Claude does not receive the file contents: give the link to the user to open or download. The link is not validated when created; an invalid message or index gives a 404 at download. Do not use to get message text, HTML, or to search for messages.",
 				inputSchema: {
 					...accountSelector,
 					folder: z
@@ -799,22 +805,30 @@ export class MyMCP extends McpAgent<MailEnv> {
 						.describe("Zero-based attachmentIndex returned by email_get_message."),
 				},
 				outputSchema: {
-					accountId: z.string(),
+					accountId: z.string().optional(),
 					folder: z.string(),
 					uid: z.number().int(),
 					attachmentIndex: z.number().int(),
-					filename: z.string().optional(),
-					contentType: z.string(),
-					size: z.number().int(),
-					contentId: z.string().optional(),
-					contentBase64: z.string(),
+					downloadUrl: z.string(),
+					expiresAt: z.string(),
 				},
-				annotations: titled("Get Email Attachment", remoteRead),
+				annotations: titled("Get Email Attachment Download Link", remoteRead),
 			},
 			(toolName) =>
 				async ({ accountId, folder, uid, attachmentIndex }: any) =>
 					observeTool(toolName, async () =>
-						text(await mail.getAttachment(accountId, folder, uid, attachmentIndex)),
+						text({
+							accountId,
+							folder,
+							uid,
+							attachmentIndex,
+							...(await createAttachmentLink(env, {
+								accountId,
+								folder,
+								uid,
+								attachmentIndex,
+							})),
+						}),
 					),
 		);
 
@@ -1627,8 +1641,58 @@ async function logRpcRequest(request: Request): Promise<void> {
 	}
 }
 
+/**
+ * GET /myMail/download/<token>: the signed token is the credential. Anything wrong with it, or
+ * with the message or attachment it points at, answers 404. Nothing here logs the URL.
+ */
+async function downloadAttachment(
+	request: Request,
+	env: MailEnv,
+	pathname: string,
+): Promise<Response> {
+	const notFound = () =>
+		new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
+	if (request.method !== "GET") return notFound();
+	const ref = await openAttachmentLink(env, pathname.slice(DOWNLOAD_PREFIX.length));
+	if (!ref) return notFound();
+	try {
+		const mail = new MailService(
+			new AccountStore(env.EMAIL_KV, env.CREDENTIAL_ENCRYPTION_KEY),
+			{
+				clientId: env.OUTLOOK_CLIENT_ID,
+				clientSecret: env.OUTLOOK_CLIENT_SECRET,
+			},
+		);
+		const file = await mail.getAttachmentFile(
+			ref.accountId,
+			ref.folder,
+			ref.uid,
+			ref.attachmentIndex,
+		);
+		return new Response(file.content, {
+			headers: {
+				"Content-Type": file.contentType || "application/octet-stream",
+				"Content-Length": String(file.content.byteLength),
+				"Content-Disposition": attachmentDisposition(file.filename),
+				"Cache-Control": "no-store",
+				"X-Content-Type-Options": "nosniff",
+			},
+		});
+	} catch (error) {
+		console.error({
+			event: "attachment_download",
+			status: "error",
+			error: safeErrorCategory(error),
+		});
+		return notFound();
+	}
+}
+
 export default {
 	async fetch(request: Request, env: MailEnv, ctx: ExecutionContext): Promise<Response> {
+		const downloadPath = new URL(request.url).pathname;
+		if (downloadPath.startsWith(DOWNLOAD_PREFIX))
+			return downloadAttachment(request, env, downloadPath);
 		return handleRequest(request, env, {
 			mcp: () => {
 				ctx.waitUntil(logRpcRequest(request));

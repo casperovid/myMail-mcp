@@ -26,6 +26,7 @@ TEAM_DOMAIN = "https://placeholder.cloudflareaccess.com"
 POLICY_AUD = "placeholder"
 OUTLOOK_TENANT = "consumers"
 OUTLOOK_CLIENT_ID = ""
+PUBLIC_BASE_URL = "https://mcp.casperovid.no"
 
 [observability]
 enabled = true
