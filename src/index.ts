@@ -18,6 +18,8 @@ import {
 	openAttachmentLink,
 } from "./attachment-link";
 import { MCP_APP_MIME_TYPE, SEND_PREVIEW_HTML, SEND_PREVIEW_URI } from "./send-preview-card";
+import { ATTACHMENT_PREVIEW_HTML, ATTACHMENT_PREVIEW_URI } from "./attachment-card";
+import { previewImage } from "./attachment-image";
 
 const accountSelector = {
 	accountId: z
@@ -1516,6 +1518,123 @@ export class MyMCP extends McpAgent<MailEnv> {
 						structuredContent: structured,
 						// _meta is delivered to the card only; the token and HTML are kept out of content.
 						_meta: { previewToken: token, html },
+					};
+				}),
+		);
+
+		this.server.registerResource(
+			"email_attachment_preview_card",
+			ATTACHMENT_PREVIEW_URI,
+			{
+				title: "Email attachment card",
+				description:
+					"Interactive card that shows one email attachment (image preview when possible) with a download button.",
+				mimeType: MCP_APP_MIME_TYPE,
+			},
+			async () => ({
+				contents: [
+					{
+						uri: ATTACHMENT_PREVIEW_URI,
+						mimeType: MCP_APP_MIME_TYPE,
+						text: ATTACHMENT_PREVIEW_HTML,
+						_meta: { ui: { prefersBorder: true } },
+					},
+				],
+			}),
+		);
+
+		this.server.registerTool(
+			"email_preview_attachment",
+			{
+				description:
+					"Show the user a card with one email attachment: file name, type, size, an image preview (png, jpeg, gif, webp; large images are scaled down to at most 1568 px) and a Download button with a signed link that expires after 15 minutes. Requires accountId when needed, exact folder path, IMAP UID, and attachmentIndex returned by email_get_message. The user sees the card; Claude does not receive the file contents or the link. Side effects: none on the mailbox. Non-image attachments get a card with file name and Download button only. Use email_get_message_attachment instead when you need to hand the user a plain download link. Do not use to read message text or to search for messages.",
+				inputSchema: {
+					...accountSelector,
+					folder: z
+						.string()
+						.default("INBOX")
+						.describe(
+							"Exact IMAP folder path returned by email_list_folders; defaults to INBOX.",
+						),
+					uid: z
+						.number()
+						.int()
+						.positive()
+						.describe(
+							"IMAP UID returned by search/get/thread results; not the email Message-ID header.",
+						),
+					attachmentIndex: z
+						.number()
+						.int()
+						.nonnegative()
+						.describe("Zero-based attachmentIndex returned by email_get_message."),
+				},
+				outputSchema: {
+					accountId: z.string().optional(),
+					folder: z.string(),
+					uid: z.number().int(),
+					attachmentIndex: z.number().int(),
+					filename: z.string().optional(),
+					contentType: z.string(),
+					size: z.number().int(),
+					imageShown: z.boolean(),
+					imageResized: z.boolean(),
+					expiresAt: z.string(),
+				},
+				annotations: titled("Preview Email Attachment", remoteRead),
+				_meta: {
+					ui: { resourceUri: ATTACHMENT_PREVIEW_URI },
+					"ui/resourceUri": ATTACHMENT_PREVIEW_URI,
+				},
+			},
+			async ({ accountId, folder, uid, attachmentIndex }: any) =>
+				observeTool("email_preview_attachment", async () => {
+					const file = await mail.getAttachmentFile(
+						accountId,
+						folder,
+						uid,
+						attachmentIndex,
+					);
+					const link = await createAttachmentLink(env, {
+						accountId,
+						folder,
+						uid,
+						attachmentIndex,
+					});
+					const image = await previewImage(env.IMAGES, file.contentType, file.content);
+					const structured = {
+						accountId,
+						folder,
+						uid,
+						attachmentIndex,
+						filename: file.filename,
+						contentType: file.contentType,
+						size: file.content.byteLength,
+						imageShown: image !== undefined,
+						imageResized: image?.resized ?? false,
+						expiresAt: link.expiresAt,
+					};
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify(
+									{
+										...structured,
+										note: "A card with the attachment is shown to the user. The file contents and download link are not included here.",
+									},
+									null,
+									2,
+								),
+							},
+						],
+						structuredContent: structured,
+						// _meta goes to the card only: the signed link and the image (as base64).
+						_meta: {
+							downloadUrl: link.downloadUrl,
+							expiresAt: link.expiresAt,
+							image: image && { mimeType: image.mimeType, base64: image.base64 },
+						},
 					};
 				}),
 		);

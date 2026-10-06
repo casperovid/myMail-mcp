@@ -557,6 +557,17 @@ with `filename`, `contentType`, and `contentBase64`. The base64 value must conta
 bytes without a data-URL prefix. Draft text and HTML bodies are emitted as quoted-printable MIME
 parts; base64 is only required for attachment bytes.
 
+### Attachment card (MCP Apps)
+
+`email_preview_attachment` (`folder`, `uid`, `attachmentIndex`) shows the user a card (`ui://email/attachment-preview-<hash>.html`)
+with the file name, type, size, an image preview and a Download button. The signed 15-minute download link and the
+image go to the card only (tool result `_meta`), not to Claude. For png, jpeg, gif and webp the card shows the image
+as it is when it is within 1568 px and about 1 MB; larger images are scaled down with the Cloudflare Images binding
+(`IMAGES`, `[images]` in `wrangler.toml`) to at most 1568 px as JPEG, quality 80, on a white background. If the
+binding fails, the result is still too large, or the attachment is not an image, the card shows the file name and the
+Download button only. The button asks the host to open the link (`ui/open-link`); if the host cannot, the link is
+shown as text. `email_get_message_attachment` still returns a plain signed download link for Claude to pass on.
+
 ### Signature
 
 Drafts created or edited by `email_create_message_draft`, `email_create_forward_draft`, and

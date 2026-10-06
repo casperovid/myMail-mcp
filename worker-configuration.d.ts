@@ -3,6 +3,7 @@
 // Runtime types generated with workerd@1.20260908.1 2026-06-14 nodejs_compat
 interface __BaseEnv_Env {
 	EMAIL_KV: KVNamespace;
+	IMAGES: ImagesBinding;
 	TEAM_DOMAIN: string;
 	POLICY_AUD: string;
 	CREDENTIAL_ENCRYPTION_KEY: string;
