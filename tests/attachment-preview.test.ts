@@ -27,9 +27,7 @@ assert.match(script, /ui\/open-link/);
 assert.match(script, /email_get_attachment_preview/);
 assert.match(script, /cardToken/);
 assert.doesNotMatch(script, /meta\.(image|downloadUrl)|result\._meta\.(image|downloadUrl)/);
-// Diagnostics panel lists names and lengths only.
-assert.match(ATTACHMENT_PREVIEW_HTML, /id="diagText"/);
-assert.doesNotMatch(script, /diag\([^)]*base64\)/);
+assert.doesNotMatch(ATTACHMENT_PREVIEW_HTML, /diag/i);
 assert.match(script, /host-context-changed/);
 assert.match(script, /\^image\\\/\(png\|jpeg\|gif\|webp\)\$/); // image mime allowlist, no svg
 assert.doesNotMatch(ATTACHMENT_PREVIEW_HTML, /<(script|link)[^>]+(src|href)=/i);
