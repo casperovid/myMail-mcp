@@ -544,7 +544,7 @@ as failed.
 
 `email_preview_send` (`folder`, `uid`) renders an MCP Apps card (`ui://email/send-preview-<hash>.html`, where `<hash>` is derived from the card HTML so hosts that cache by URI pick up changes) showing From, To,
 Cc, Subject, the full plain text body, and the HTML body in a script-less sandboxed iframe, with **Send** and
-**Cancel** buttons. Nothing is sent until the user presses Send. The tool creates a one-time token (15 minutes)
+**Cancel** buttons. Nothing is sent until the user presses Send. The tool creates a one-time token (15 minutes) The token is stored in Workers KV (key `send-preview:<token>`, 15 minute TTL), not in the MCP session's Durable Object, because the card's Send call can arrive on a different MCP session than the model's preview call.
 bound to a SHA-256 of the draft's raw source and hands it to the card only through the result `_meta`. Send calls
 `email_send_previewed_draft` and Cancel calls `email_cancel_previewed_draft`; both are registered with
 `_meta.ui.visibility: ["app"]`, so the host must hide them from the model and reject model calls. The server
@@ -613,3 +613,9 @@ the Worker. The Worker independently validates the Access JWT using the team JWK
 application audience. Mailbox passwords and OAuth tokens are AES-256-GCM encrypted in Workers KV
 and are never returned by account tools. Changing `CREDENTIAL_ENCRYPTION_KEY` makes existing
 stored accounts unreadable.
+
+### Auth diagnostics
+
+Every `401` on the MCP endpoint logs `mcp_unauthorized` with a `reason` category (`no_token`, `invalid_token`,
+`wrong_token_type`, `expired`, `not_allowed`, `wrong_audience`), the HTTP method and the user agent, never the token.
+Each dynamic client registration logs `oauth_register` with the `clientName`, the redirect host names and the user agent.

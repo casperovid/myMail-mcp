@@ -21,6 +21,7 @@ import {
 import { MCP_APP_MIME_TYPE, SEND_PREVIEW_HTML, SEND_PREVIEW_URI } from "./send-preview-card";
 import { ATTACHMENT_PREVIEW_HTML, ATTACHMENT_PREVIEW_URI } from "./attachment-card";
 import { previewImage } from "./attachment-image";
+import { cancelApproval, consumeApproval, putApproval } from "./send-approval";
 
 const accountSelector = {
 	accountId: z
@@ -135,16 +136,6 @@ const remoteCreate = annotations(false, false, false, true);
 const remoteMove = annotations(false, true, false, true);
 const remoteDelete = annotations(false, true, true, true);
 const remoteSend = annotations(false, true, false, true);
-
-const PREVIEW_TTL_MS = 15 * 60 * 1000;
-
-interface PreviewRecord {
-	accountId: string;
-	folder: string;
-	uid: number;
-	contentHash: string;
-	expiresAt: number;
-}
 
 function randomToken(): string {
 	const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -1378,8 +1369,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 		);
 
 		// --- MCP Apps send approval: preview card + app-only Send/Cancel tools ---
-		const storage = this.ctx.storage;
-		const previewKey = (token: string) => `send-preview:${token}`;
+		// Approvals live in KV (shared by all MCP sessions), see src/send-approval.ts.
 		const cardMeta = {
 			ui: { resourceUri: SEND_PREVIEW_URI },
 			"ui/resourceUri": SEND_PREVIEW_URI,
@@ -1398,16 +1388,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			sentError: z.string().optional(),
 			draftDeleted: z.boolean(),
 		};
-		const consumePreview = async (token: string) => {
-			const record = await storage.get<PreviewRecord>(previewKey(token));
-			// Delete before use so a token can never be replayed, even if the send below fails.
-			await storage.delete(previewKey(token));
-			if (!record || record.expiresAt < Date.now())
-				throw new Error(
-					"The send approval token is invalid, already used, cancelled, or expired. Create a new preview with email_preview_send.",
-				);
-			return record;
-		};
+		const consumePreview = (token: string) => consumeApproval(env.EMAIL_KV, token);
 
 		this.server.registerResource(
 			"email_send_preview_card",
@@ -1482,20 +1463,13 @@ export class MyMCP extends McpAgent<MailEnv> {
 						folder,
 						uid,
 					);
-					const now = Date.now();
-					for (const [key, value] of await storage.list<PreviewRecord>({
-						prefix: "send-preview:",
-					}))
-						if (value.expiresAt < now) await storage.delete(key);
 					const token = randomToken();
-					const expiresAt = now + PREVIEW_TTL_MS;
-					await storage.put(previewKey(token), {
+					const { expiresAt } = await putApproval(env.EMAIL_KV, token, {
 						accountId: shown.accountId,
 						folder,
 						uid,
 						contentHash,
-						expiresAt,
-					} satisfies PreviewRecord);
+					});
 					const structured = {
 						...shown,
 						hasHtml: html !== undefined,
@@ -1741,7 +1715,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			},
 			async ({ previewToken }: any) =>
 				observeTool("email_cancel_previewed_draft", async () => {
-					await storage.delete(previewKey(previewToken));
+					await cancelApproval(env.EMAIL_KV, previewToken);
 					return text({ cancelled: true });
 				}),
 		);

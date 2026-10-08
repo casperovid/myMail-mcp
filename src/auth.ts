@@ -12,6 +12,7 @@
  * that makes each authorization code single-use.
  */
 import { BASE_PATH, isMcpPath, withBasePath } from "./base-path";
+import { diagnoseBearer } from "./bearer-diagnosis";
 import { bytesToBase64Url, openJson, sealJson } from "./crypto";
 
 interface AuthEnv {
@@ -103,10 +104,23 @@ export async function handleRequest(
 	// MCP endpoint: bearer token required
 	if (isMcpPath(path)) {
 		const match = /^Bearer\s+(\S+)$/i.exec(request.headers.get("Authorization") ?? "");
-		if (!match) return unauthorized(origin);
+		if (!match) {
+			logUnauthorized("no_token", request);
+			return unauthorized(origin);
+		}
 		const claims = await open<{ sub: string; aud: string }>(env, "at", match[1]);
-		if (!claims || !isAllowed(claims.sub, env) || claims.aud !== resourceUrl(origin))
+		if (!claims || !isAllowed(claims.sub, env) || claims.aud !== resourceUrl(origin)) {
+			logUnauthorized(
+				(await diagnoseBearer(
+					request.headers.get("Authorization"),
+					env.CREDENTIAL_ENCRYPTION_KEY,
+					resourceUrl(origin),
+					(login) => isAllowed(login, env),
+				)) ?? "invalid_token",
+				request,
+			);
 			return unauthorized(origin, "invalid_token");
+		}
 		return next.mcp();
 	}
 
@@ -155,6 +169,17 @@ function protectedResourceMetadata(origin: string) {
 	};
 }
 
+/** Logs why an MCP request got 401: a category and the client, never the token. */
+function logUnauthorized(reason: string, request: Request): void {
+	console.log({
+		event: "mcp_unauthorized",
+		reason,
+		method: request.method,
+		hasMcpSession: request.headers.has("mcp-session-id"),
+		userAgent: request.headers.get("user-agent")?.slice(0, 60),
+	});
+}
+
 function unauthorized(origin: string, error?: string): Response {
 	const parts = [
 		`resource_metadata="${origin}/.well-known/oauth-protected-resource${withBasePath("/mcp")}"`,
@@ -191,6 +216,12 @@ async function register(request: Request, env: AuthEnv): Promise<Response> {
 		typeof body.client_name === "string" && body.client_name.trim()
 			? body.client_name.trim().slice(0, 100)
 			: "Ukjent klient";
+	console.log({
+		event: "oauth_register",
+		clientName,
+		redirectHosts: [...new Set(redirectUris.map((uri) => new URL(uri).hostname))],
+		userAgent: request.headers.get("user-agent")?.slice(0, 60),
+	});
 	const clientId = await seal(env, "client", { r: redirectUris, n: clientName }, CLIENT_TTL);
 	return json(
 		{
