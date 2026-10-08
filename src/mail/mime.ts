@@ -15,6 +15,55 @@ export interface DraftInput {
 	}>;
 }
 
+/** RFC 5322 recommends header lines of at most 78 characters; receivers may reject much longer ones. */
+export const HEADER_LINE_LIMIT = 78;
+/** Message-IDs kept in References: the first of the thread plus the most recent ones. */
+export const MAX_REFERENCES = 21;
+
+/**
+ * Keeps the thread root and the latest ids so a long thread cannot make the header grow
+ * without bound. Duplicates are dropped.
+ */
+export function trimReferences(references: string[]): string[] {
+	const unique = [...new Set(references)];
+	if (unique.length <= MAX_REFERENCES) return unique;
+	return [unique[0], ...unique.slice(unique.length - (MAX_REFERENCES - 1))];
+}
+
+/**
+ * Folds one header (already "Name: value", possibly with existing CRLF + space folds) at
+ * whitespace so that no line exceeds HEADER_LINE_LIMIT where a break is possible.
+ * A single token longer than the limit stays on its own line.
+ */
+export function foldHeader(header: string, limit = HEADER_LINE_LIMIT): string {
+	return header
+		.split("\r\n")
+		.map((line) => foldLine(line, limit))
+		.join("\r\n");
+}
+
+function foldLine(line: string, limit: number): string {
+	const output: string[] = [];
+	let rest = line;
+	while (rest.length > limit) {
+		let cut = rest.lastIndexOf(" ", limit);
+		// A space at index 0 is the fold marker of a continuation line, not a place to break.
+		if (cut <= 0) {
+			cut = rest.indexOf(" ", Math.max(limit, 1));
+			if (cut <= 0) break;
+		}
+		const head = rest.slice(0, cut).trimEnd();
+		if (head) output.push(head);
+		rest = rest.slice(cut);
+		if (!rest.trim()) {
+			rest = "";
+			break;
+		}
+	}
+	if (rest) output.push(rest);
+	return output.join("\r\n");
+}
+
 export function buildDraftMessage(
 	from: string,
 	input: DraftInput,
@@ -33,7 +82,7 @@ export function buildDraftMessage(
 		...(input.replyTo ? [`Reply-To: ${addressHeader(input.replyTo)}`] : []),
 		...(input.inReplyTo ? [`In-Reply-To: ${sanitizeMessageId(input.inReplyTo)}`] : []),
 		...(input.references?.length
-			? [`References: ${input.references.map(sanitizeMessageId).join(" ")}`]
+			? [`References: ${trimReferences(input.references.map(sanitizeMessageId)).join(" ")}`]
 			: []),
 		`Subject: ${encodeHeader(input.subject)}`,
 		`Date: ${new Date().toUTCString()}`,
@@ -72,7 +121,7 @@ export function buildDraftMessage(
 		headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
 		body = [
 			`--${boundary}`,
-			...contentHeaders,
+			...contentHeaders.map((h) => foldHeader(h)),
 			"",
 			contentBody,
 			...input.attachments.flatMap((attachment) => attachmentPart(boundary, attachment)),
@@ -84,7 +133,9 @@ export function buildDraftMessage(
 	}
 	return {
 		messageId,
-		source: new TextEncoder().encode(`${headers.join("\r\n")}\r\n\r\n${body}`),
+		source: new TextEncoder().encode(
+			`${headers.map((h) => foldHeader(h)).join("\r\n")}\r\n\r\n${body}`,
+		),
 	};
 }
 
@@ -119,7 +170,9 @@ function attachmentPart(
 		`--${boundary}`,
 		`Content-Type: ${contentType}`,
 		"Content-Transfer-Encoding: base64",
-		`Content-Disposition: attachment; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`,
+		foldHeader(
+			`Content-Disposition: attachment; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`,
+		),
 		"",
 		encoded,
 	];
