@@ -42,7 +42,10 @@ await assert.rejects(consumeApproval(kv, "x".repeat(43), 2_000), /invalid/);
 // Expired approvals are refused (and removed).
 await putApproval(kv, token, record, 1_000);
 await assert.rejects(consumeApproval(kv, token, 1_000 + APPROVAL_TTL_MS + 1), /expired/);
-assert.equal(kv.data.size, 0);
+assert.equal(
+	[...kv.data.keys()].filter((key: string) => key.startsWith("send-preview:")).length,
+	0,
+);
 
 // Cancel removes it; a corrupt value is refused.
 await putApproval(kv, token, record, 1_000);

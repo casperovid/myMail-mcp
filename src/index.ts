@@ -21,7 +21,8 @@ import {
 import { MCP_APP_MIME_TYPE, SEND_PREVIEW_HTML, SEND_PREVIEW_URI } from "./send-preview-card";
 import { ATTACHMENT_PREVIEW_HTML, ATTACHMENT_PREVIEW_URI } from "./attachment-card";
 import { previewImage } from "./attachment-image";
-import { cancelApproval, consumeApproval, putApproval } from "./send-approval";
+import { approvalState, cancelApproval, consumeApproval, putApproval } from "./send-approval";
+import { createStatusToken, decideSendState, openStatusToken } from "./send-status";
 
 const accountSelector = {
 	accountId: z
@@ -1451,6 +1452,12 @@ export class MyMCP extends McpAgent<MailEnv> {
 						}),
 					),
 					expiresAt: z.string(),
+					statusToken: z
+						.string()
+						.optional()
+						.describe(
+							"Sealed reference the card uses to look the draft up in the Sent folder.",
+						),
 					sent: z.literal(false),
 				},
 				annotations: titled("Preview Email Before Sending", remoteRead),
@@ -1470,8 +1477,15 @@ export class MyMCP extends McpAgent<MailEnv> {
 						uid,
 						contentHash,
 					});
+					const statusToken = shown.messageId
+						? await createStatusToken(env.CREDENTIAL_ENCRYPTION_KEY, {
+								accountId: shown.accountId,
+								messageId: shown.messageId,
+							})
+						: undefined;
 					const structured = {
 						...shown,
+						statusToken,
 						hasHtml: html !== undefined,
 						expiresAt: new Date(expiresAt).toISOString(),
 						sent: false as const,
@@ -1659,6 +1673,41 @@ export class MyMCP extends McpAgent<MailEnv> {
 						],
 						structuredContent: structured,
 					};
+				}),
+		);
+
+		this.server.registerTool(
+			"email_get_send_status",
+			{
+				description:
+					"App-only: called by the email_preview_send card when it is shown, never by the model. Reports whether the previewed draft has been sent (a copy with the same Message-ID is in the Sent folder, and when), is still waiting for approval, or was cancelled, expired, or started sending without a copy in Sent. Side effects: none; read-only and does not use up the approval token.",
+				inputSchema: {
+					statusToken: z
+						.string()
+						.min(20)
+						.describe("Sealed reference delivered to the card by email_preview_send."),
+					previewToken: z
+						.string()
+						.min(20)
+						.describe("The card's approval token; only inspected, never used."),
+				},
+				outputSchema: {
+					state: z.enum(["sent", "sending_started", "active", "cancelled", "expired"]),
+					sentAt: z.string().optional(),
+				},
+				annotations: titled("Check Email Send Status", remoteRead),
+				_meta: appOnlyMeta,
+			},
+			async ({ statusToken, previewToken }: any) =>
+				observeTool("email_get_send_status", async () => {
+					const ref = await openStatusToken(env.CREDENTIAL_ENCRYPTION_KEY, statusToken);
+					if (!ref) throw new Error("The status reference is invalid or expired.");
+					const copy = await mail.findSentCopy(ref.accountId, ref.messageId);
+					const approval = await approvalState(env.EMAIL_KV, previewToken);
+					return text({
+						state: decideSendState(approval, copy !== undefined),
+						sentAt: copy?.date,
+					});
 				}),
 		);
 

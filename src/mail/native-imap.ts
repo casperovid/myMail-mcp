@@ -220,6 +220,17 @@ export class NativeImapSession {
 		return { folder: drafts.path, uid: appendedUid };
 	}
 
+	/** Looks for a message with this Message-ID in the Sent folder; returns its place and INTERNALDATE. */
+	async findSentCopy(
+		messageId: string,
+	): Promise<{ folder: string; uid: number; date?: string } | undefined> {
+		const sent = findSentFolder(await this.listFolders());
+		if (!sent) throw new Error("The account does not advertise a Sent folder");
+		const { messages } = await this.search({ folder: sent.path, messageId, limit: 1 });
+		const found = messages[0];
+		return found ? { folder: sent.path, uid: found.uid, date: found.date } : undefined;
+	}
+
 	async saveSent(
 		source: Uint8Array,
 		messageId: string | undefined,

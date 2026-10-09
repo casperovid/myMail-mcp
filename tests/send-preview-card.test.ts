@@ -34,6 +34,18 @@ assert.match(script, /ResizeObserver/);
 assert.doesNotMatch(SEND_PREVIEW_HTML, /<(script|link)[^>]+(src|href)=/i);
 assert.match(script, /email_send_previewed_draft/);
 assert.match(script, /email_cancel_previewed_draft/);
+// On load the card checks what happened to the draft; it does not assume it is unsent.
+assert.match(script, /email_get_send_status/);
+assert.match(script, /statusToken/);
+for (const text of [
+	"Sendt ",
+	"Utløpt, ikke sendt",
+	"Avbrutt, ikke sendt",
+	"Sending startet, ikke funnet i Sendt",
+	"Kunne ikke sjekke status",
+])
+	assert.ok(script.includes(text), text);
+assert.match(SEND_PREVIEW_HTML, /id="actions" hidden/); // Send/Cancel are hidden until the state is known
 
 assert.equal(
 	await sha256Hex("abc"),
@@ -49,3 +61,11 @@ assert.doesNotMatch(indexSource, /ui:\/\/email/);
 assert.match(indexSource, /resourceUri: SEND_PREVIEW_URI/);
 assert.match(indexSource, /"ui\/resourceUri": SEND_PREVIEW_URI/);
 assert.match(indexSource, /registerResource\(\s*"email_send_preview_card",\s*SEND_PREVIEW_URI/);
+
+const sendIndexSource = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+const statusTool = sendIndexSource.slice(
+	sendIndexSource.indexOf('"email_get_send_status",'),
+	sendIndexSource.indexOf('"email_send_previewed_draft",'),
+);
+assert.match(statusTool, /_meta: appOnlyMeta/);
+assert.doesNotMatch(statusTool, /consumeApproval|storage\./);

@@ -7,6 +7,9 @@
  */
 export const APPROVAL_TTL_MS = 15 * 60 * 1000;
 const PREFIX = "send-preview:";
+const DONE_PREFIX = "send-done:";
+/** How long the outcome marker is kept, so a card opened later still knows what happened. */
+const MARKER_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 export interface ApprovalRecord {
 	accountId: string;
@@ -50,9 +53,37 @@ export async function consumeApproval(
 		throw new Error(
 			"The send approval token is invalid, already used, cancelled, or expired. Create a new preview with email_preview_send.",
 		);
+	// Marker: sending was started with this token (it may still have failed afterwards).
+	await kv.put(DONE_PREFIX + token, "sent", { expirationTtl: MARKER_TTL_SECONDS });
 	return record;
 }
 
 export async function cancelApproval(kv: ApprovalStore, token: string): Promise<void> {
+	const existing = await kv.get(PREFIX + token);
 	await kv.delete(PREFIX + token);
+	// Only mark a token that was still open; never overwrite the marker of a sent one.
+	if (existing && !(await kv.get(DONE_PREFIX + token)))
+		await kv.put(DONE_PREFIX + token, "cancelled", { expirationTtl: MARKER_TTL_SECONDS });
+}
+
+export type ApprovalState = "active" | "sent" | "cancelled" | "expired";
+
+/** What happened to an approval token, without using it up. */
+export async function approvalState(
+	kv: ApprovalStore,
+	token: string,
+	now = Date.now(),
+): Promise<ApprovalState> {
+	const marker = await kv.get(DONE_PREFIX + token);
+	if (marker === "sent" || marker === "cancelled") return marker;
+	const raw = await kv.get(PREFIX + token);
+	if (!raw) return "expired";
+	try {
+		const record = JSON.parse(raw) as ApprovalRecord;
+		return typeof record.expiresAt === "number" && record.expiresAt >= now
+			? "active"
+			: "expired";
+	} catch {
+		return "expired";
+	}
 }

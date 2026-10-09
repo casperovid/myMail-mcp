@@ -30,6 +30,7 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 	button { font:inherit; padding:7px 16px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--fg); cursor:pointer; }
 	button.send { background:var(--accent); border-color:var(--accent); color:#fff; }
 	button:disabled { opacity:.5; cursor:default; }
+	#final { margin-top:14px; font-weight:600; }
 	#status { margin-top:10px; } .error { color:var(--danger); } .ok { color:var(--ok); }
 </style>
 </head>
@@ -47,7 +48,9 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 	<iframe id="htmlFrame" title="E-postinnhold" sandbox="allow-same-origin" referrerpolicy="no-referrer" hidden></iframe>
 	<details id="textBox" hidden><summary>Ren tekst</summary><div class="body" id="text"></div></details>
 	<div class="body" id="textMain"></div>
-	<div class="actions"><button class="send" id="send">Send</button><button id="cancel">Avbryt</button></div>
+	<div id="final" role="status" hidden></div>
+	<div class="actions" id="actions" hidden><button class="send" id="send">Send</button><button id="cancel">Avbryt</button></div>
+	<div class="actions" id="retryBox" hidden><button id="retry">Prøv igjen</button></div>
 </div>
 <div id="status" role="status"></div>
 <script>
@@ -57,6 +60,8 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 	let nextId = 1;
 	let token = null;
 	let done = false;
+	let statusToken = null;
+	let canSendFlag = true;
 	let htmlBody = "";
 
 	const post = (message) => window.parent.postMessage({ jsonrpc: "2.0", ...message }, "*");
@@ -112,9 +117,56 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 			$("textMain").textContent = data.text || "";
 		}
 		if (data.bcc && data.bcc.length) setStatus("Skjult kopi (Bcc): " + data.bcc.join(", "));
+		canSendFlag = data.canSend;
 		if (data.canSend === false) { $("send").disabled = true; setStatus("SMTP er ikke konfigurert for denne kontoen; sending er utilgjengelig.", "error"); }
+		statusToken = typeof data.statusToken === "string" ? data.statusToken : null;
+		checkStatus();
 		reportSize();
 	}
+
+	// A card is rendered again whenever the chat is loaded, so what happened to the draft is looked
+	// up (Sent folder + approval marker) instead of assuming the draft is still unsent.
+	function formatTime(value) {
+		const date = new Date(value);
+		return Number.isNaN(date.valueOf()) ? String(value || "") : date.toLocaleString("nb-NO", { dateStyle: "long", timeStyle: "short" });
+	}
+	function showFinal(message) {
+		done = true;
+		$("actions").hidden = true;
+		$("retryBox").hidden = true;
+		$("final").textContent = message;
+		$("final").hidden = false;
+		reportSize();
+	}
+	async function checkStatus() {
+		$("actions").hidden = true;
+		$("retryBox").hidden = true;
+		if (!statusToken) { $("actions").hidden = false; return; }
+		$("final").textContent = "Sjekker status …";
+		$("final").hidden = false;
+		reportSize();
+		try {
+			const response = await request("tools/call", { name: "email_get_send_status", arguments: { statusToken, previewToken: token } });
+			if (response.isError) throw new Error("Statussjekken feilet");
+			const result = response.structuredContent || {};
+			if (result.state === "sent") showFinal(result.sentAt ? "Sendt " + formatTime(result.sentAt) : "Sendt");
+			else if (result.state === "sending_started") showFinal("Sending startet, ikke funnet i Sendt");
+			else if (result.state === "cancelled") showFinal("Avbrutt, ikke sendt");
+			else if (result.state === "expired") showFinal("Utløpt, ikke sendt");
+			else if (result.state === "active") {
+				$("final").hidden = true;
+				$("actions").hidden = false;
+				if (canSendFlag === false) $("send").disabled = true;
+				reportSize();
+			} else throw new Error("Ukjent status");
+		} catch (error) {
+			// Unknown: do not offer Send, the one-time token still protects against a double send.
+			$("final").textContent = "Kunne ikke sjekke status";
+			$("retryBox").hidden = false;
+			reportSize();
+		}
+	}
+	$("retry").addEventListener("click", checkStatus);
 
 	// The HTML body is shown in a script-less sandbox with the card's own colors as base style.
 	// allow-same-origin is only there so the card can measure the content height (no scripts run).
@@ -152,16 +204,16 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 			const result = await request("tools/call", { name, arguments: { previewToken: token } });
 			const detail = (result.content || []).map((c) => c.text).filter(Boolean).join(" ");
 			if (result.isError) throw new Error(detail || "Verktøyet feilet");
-			done = true;
 			token = null;
-			setStatus(doneMessage, cls);
+			setStatus("", "");
+			showFinal(doneMessage);
 		} catch (error) {
 			setStatus(error.message, "error");
 		}
 		setBusy(false);
 	}
-	$("send").addEventListener("click", () => act("email_send_previewed_draft", "Sendt.", "ok"));
-	$("cancel").addEventListener("click", () => act("email_cancel_previewed_draft", "Avbrutt. Ingenting er sendt.", ""));
+	$("send").addEventListener("click", () => act("email_send_previewed_draft", "Sendt " + formatTime(new Date().toISOString()), "ok"));
+	$("cancel").addEventListener("click", () => act("email_cancel_previewed_draft", "Avbrutt, ikke sendt", ""));
 
 	// Same measurement as the official SDK's autoResize: the host sizes a flexible iframe only
 	// from ui/notifications/size-changed, so without it the card renders with no height.

@@ -590,6 +590,11 @@ export class MailService {
 		};
 	}
 
+	/** The Sent-folder copy of a message with this Message-ID, if there is one. */
+	async findSentCopy(accountId: string | undefined, messageId: string) {
+		return this.withImap(accountId, (session) => session.findSentCopy(messageId));
+	}
+
 	/** Sends a draft only if its raw source still hashes to the value approved on the preview card. */
 	async sendApprovedDraft(
 		accountId: string | undefined,
