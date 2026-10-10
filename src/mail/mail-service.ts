@@ -1,3 +1,5 @@
+import { parseBodyStructure } from "./bodystructure";
+import { assemblePartMessage, assembleTextMessage } from "./partial-message";
 import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
 import { Buffer } from "node:buffer";
 import { safeErrorCategory } from "../observability";
@@ -269,8 +271,45 @@ export class MailService {
 
 	async getMessage(accountId: string | undefined, folder: string, uid: number) {
 		return this.withImap(accountId, async (session, account) => {
-			const message = await session.getMessage(folder, uid);
-			const parsed = await simpleParser(Buffer.from(message.source));
+			// Fetch only the header and the text/HTML parts; attachments are listed from
+			// BODYSTRUCTURE and never downloaded. Fall back to the whole message if the
+			// structure cannot be read.
+			let partial: Awaited<ReturnType<typeof session.getMessageText>> | undefined;
+			try {
+				partial = await session.getMessageText(folder, uid);
+			} catch (error) {
+				if (error instanceof Error && /not found/.test(error.message)) throw error;
+			}
+			let parsed: ParsedMail;
+			let flags: string[];
+			let attachments: {
+				attachmentIndex: number;
+				filename?: string;
+				contentType: string;
+				size: number;
+			}[];
+			if (partial) {
+				parsed = await simpleParser(
+					Buffer.from(assembleTextMessage(partial.header, partial.parts)),
+				);
+				flags = partial.flags;
+				attachments = partial.structure.attachments.map((item) => ({
+					attachmentIndex: item.attachmentIndex,
+					filename: item.filename,
+					contentType: `${item.type}/${item.subtype}`,
+					size: item.decodedSize,
+				}));
+			} else {
+				const message = await session.getMessage(folder, uid);
+				parsed = await simpleParser(Buffer.from(message.source));
+				flags = [...(message.flags ?? [])];
+				attachments = parsed.attachments.map((item, attachmentIndex) => ({
+					attachmentIndex,
+					filename: item.filename,
+					contentType: item.contentType,
+					size: item.size,
+				}));
+			}
 			const references = normalizeReferences(parsed.references);
 			return {
 				accountId: account.id,
@@ -286,13 +325,8 @@ export class MailService {
 				date: parsed.date?.toISOString(),
 				text: parsed.text,
 				html: typeof parsed.html === "string" ? parsed.html : undefined,
-				attachments: parsed.attachments.map((item, attachmentIndex) => ({
-					attachmentIndex,
-					filename: item.filename,
-					contentType: item.contentType,
-					size: item.size,
-				})),
-				flags: [...(message.flags ?? [])],
+				attachments,
+				flags,
 			};
 		});
 	}
@@ -305,13 +339,37 @@ export class MailService {
 		attachmentIndex: number,
 	) {
 		return this.withImap(accountId, async (session) => {
+			const notFound = () =>
+				new Error(
+					`Attachment index ${attachmentIndex} was not found on message UID ${uid}`,
+				);
+			// Same numbering as getMessage: BODYSTRUCTURE order of attachment parts. Only that
+			// part is downloaded; the whole message is the fallback.
+			let leaf: { part: string; type: string; subtype: string } | undefined;
+			let structureKnown = false;
+			try {
+				const structure = parseBodyStructure(await session.getStructureLine(folder, uid));
+				structureKnown = true;
+				leaf = structure.attachments[attachmentIndex];
+			} catch (error) {
+				if (error instanceof Error && /not found/.test(error.message)) throw error;
+			}
+			if (structureKnown && !leaf) throw notFound();
+			if (leaf && !(leaf.type === "message")) {
+				const { mime, body } = await session.getPart(folder, uid, leaf.part);
+				const parsed = await simpleParser(Buffer.from(assemblePartMessage(mime, body)));
+				const attachment = parsed.attachments[0];
+				if (attachment)
+					return {
+						filename: attachment.filename,
+						contentType: attachment.contentType,
+						content: new Uint8Array(attachment.content),
+					};
+			}
 			const message = await session.getMessage(folder, uid);
 			const parsed = await simpleParser(Buffer.from(message.source));
 			const attachment = parsed.attachments[attachmentIndex];
-			if (!attachment)
-				throw new Error(
-					`Attachment index ${attachmentIndex} was not found on message UID ${uid}`,
-				);
+			if (!attachment) throw notFound();
 			return {
 				filename: attachment.filename,
 				contentType: attachment.contentType,

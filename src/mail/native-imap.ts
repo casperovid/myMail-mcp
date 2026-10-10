@@ -1,4 +1,5 @@
 import { connect } from "cloudflare:sockets";
+import { parseBodyStructure, type BodyStructure } from "./bodystructure";
 import { takeBytes } from "./byte-reader";
 import { decodeHeaderWords } from "./mime";
 import type { MailAccount } from "./types";
@@ -41,6 +42,9 @@ export interface SearchInput {
 	offset?: number;
 	sortOrder?: "newest" | "oldest";
 }
+
+const LITERAL_STALL_TIMEOUT_MS = 20_000;
+const LITERAL_TOTAL_TIMEOUT_MS = 60_000;
 
 export class NativeImapSession {
 	private socket?: Socket;
@@ -201,6 +205,79 @@ export class NativeImapSession {
 		return {
 			source: fetch.literal,
 			flags: parseFlags(responses.map(({ line }) => line).join(" ")),
+		};
+	}
+
+	/**
+	 * Fetches the structure of a message and only its header and text/HTML parts, so large
+	 * attachments are never downloaded. Throws when the server's BODYSTRUCTURE cannot be parsed,
+	 * letting the caller fall back to `getMessage`.
+	 */
+	async getMessageText(
+		folder: string,
+		uid: number,
+	): Promise<{
+		flags: string[];
+		structure: BodyStructure;
+		header: Uint8Array;
+		parts: { part: string; mime: Uint8Array; body: Uint8Array }[];
+	}> {
+		await this.select(folder, true);
+		const structureResponses = await this.command(`UID FETCH ${uid} (UID FLAGS BODYSTRUCTURE)`);
+		const fetchLine = structureResponses.find(({ line }) => /BODYSTRUCTURE/i.test(line));
+		if (!fetchLine) throw new Error(`Message UID ${uid} not found`);
+		const structure = parseBodyStructure(fetchLine.line);
+		const sections = [
+			"HEADER",
+			...structure.textParts.flatMap(({ part }) => [`${part}.MIME`, part]),
+		];
+		const responses = await this.command(
+			`UID FETCH ${uid} (${sections.map((section) => `BODY.PEEK[${section}]`).join(" ")})`,
+		);
+		const literals = new Map<string, Uint8Array>();
+		for (const { line, literal } of responses) {
+			const key = [...line.matchAll(/BODY\[([^\]]*)\]/gi)].pop()?.[1];
+			if (key && literal) literals.set(key.toUpperCase(), literal);
+		}
+		return {
+			flags: parseFlags(structureResponses.map(({ line }) => line).join(" ")),
+			structure,
+			header: literals.get("HEADER") ?? new Uint8Array(),
+			parts: structure.textParts.map(({ part }) => ({
+				part,
+				mime: literals.get(`${part}.MIME`.toUpperCase()) ?? new Uint8Array(),
+				body: literals.get(part.toUpperCase()) ?? new Uint8Array(),
+			})),
+		};
+	}
+
+	/** The untagged FETCH line holding the message's BODYSTRUCTURE. */
+	async getStructureLine(folder: string, uid: number): Promise<string> {
+		await this.select(folder, true);
+		const responses = await this.command(`UID FETCH ${uid} (UID BODYSTRUCTURE)`);
+		const found = responses.find(({ line }) => /BODYSTRUCTURE/i.test(line));
+		if (!found) throw new Error(`Message UID ${uid} not found`);
+		return found.line;
+	}
+
+	/** Fetches one MIME section (header block and encoded body) of a message. */
+	async getPart(
+		folder: string,
+		uid: number,
+		part: string,
+	): Promise<{ mime: Uint8Array; body: Uint8Array }> {
+		await this.select(folder, true);
+		const responses = await this.command(
+			`UID FETCH ${uid} (BODY.PEEK[${part}.MIME] BODY.PEEK[${part}])`,
+		);
+		const literals = new Map<string, Uint8Array>();
+		for (const { line, literal } of responses) {
+			const key = [...line.matchAll(/BODY\[([^\]]*)\]/gi)].pop()?.[1];
+			if (key && literal) literals.set(key.toUpperCase(), literal);
+		}
+		return {
+			mime: literals.get(`${part}.MIME`.toUpperCase()) ?? new Uint8Array(),
+			body: literals.get(part.toUpperCase()) ?? new Uint8Array(),
 		};
 	}
 
@@ -470,8 +547,17 @@ export class NativeImapSession {
 	}
 
 	private async readBytes(length: number): Promise<Uint8Array> {
+		// A literal that stalls, or takes unreasonably long overall, fails instead of hanging.
+		const deadline = Date.now() + LITERAL_TOTAL_TIMEOUT_MS;
 		const { value, rest } = await takeBytes(this.buffered, length, async () => {
-			const { done, value } = await this.reader!.read();
+			const remaining = deadline - Date.now();
+			if (remaining <= 0)
+				throw new Error(`IMAP literal of ${length} bytes timed out (total time exceeded)`);
+			const { done, value } = await withTimeout(
+				this.reader!.read(),
+				Math.min(LITERAL_STALL_TIMEOUT_MS, remaining),
+				`IMAP literal of ${length} bytes timed out (no data received)`,
+			);
 			if (done) throw new Error("IMAP server closed the connection");
 			return value;
 		});

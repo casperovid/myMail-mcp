@@ -507,6 +507,12 @@ full message content is required.
 `email_get_mailbox_status` returns the total and unread message counts plus IMAP `RECENT`, `UIDNEXT`,
 and `UIDVALIDITY` values for one folder.
 
+`email_get_message` fetches `BODYSTRUCTURE` and then only the header and the text/HTML parts, so large attachments are
+never downloaded. Attachments are listed with file name, type, an approximate decoded `size` and a zero-based
+`attachmentIndex` (BODYSTRUCTURE order of non-body parts, matching mailparser's order). If the structure cannot be parsed
+the whole message is fetched instead. Every IMAP literal read stops after 20 s without data or 60 s in total. The download
+route fetches only the one attachment part.
+
 `email_get_message` includes a zero-based `attachmentIndex` for every attachment. Pass the folder, IMAP UID,
 and index to `email_get_message_attachment`. It does not return the file: it returns a signed `downloadUrl`
 (`<PUBLIC_BASE_URL>/myMail/download/<token>`) and `expiresAt`. The link is valid for 15 minutes, can be opened
