@@ -1,3 +1,4 @@
+import { walkChain } from "../draft-chain";
 import { parseBodyStructure } from "./bodystructure";
 import { assemblePartMessage, assembleTextMessage } from "./partial-message";
 import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
@@ -579,6 +580,7 @@ export class MailService {
 				replaced: { folder: input.folder, uid: input.uid },
 				...location,
 				messageId: draft.messageId,
+				previousMessageId: parsed.messageId,
 			};
 		});
 	}
@@ -650,6 +652,27 @@ export class MailService {
 	/** The Sent-folder copy of a message with this Message-ID, if there is one. */
 	async findSentCopy(accountId: string | undefined, messageId: string) {
 		return this.withImap(accountId, (session) => session.findSentCopy(messageId));
+	}
+
+	/**
+	 * What became of a previewed draft: follows the replacement chain to its latest version and
+	 * looks for a Sent copy of any version. Only when nothing was sent and nothing replaced it is
+	 * the Drafts folder checked for the draft itself.
+	 */
+	async draftChainStatus(
+		accountId: string | undefined,
+		messageId: string,
+		next: (messageId: string) => Promise<string | undefined>,
+	) {
+		return this.withImap(accountId, async (session) => {
+			const chain = await walkChain(messageId, {
+				next,
+				sentCopy: (id) => session.findSentCopy(id),
+			});
+			const draftExists =
+				chain.sent || chain.replaced ? undefined : await session.draftExists(chain.last);
+			return { ...chain, draftExists };
+		});
 	}
 
 	/** Sends a draft only if its raw source still hashes to the value approved on the preview card. */

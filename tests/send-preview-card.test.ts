@@ -43,6 +43,8 @@ for (const text of [
 	"Avbrutt, ikke sendt",
 	"Sending startet, ikke funnet i Sendt",
 	"Kunne ikke sjekke status",
+	"Erstattet av nyere utkast",
+	"Slettet",
 ])
 	assert.ok(script.includes(text), text);
 assert.match(SEND_PREVIEW_HTML, /id="actions" hidden/); // Send/Cancel are hidden until the state is known

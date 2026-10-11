@@ -308,6 +308,14 @@ export class NativeImapSession {
 		return found ? { folder: sent.path, uid: found.uid, date: found.date } : undefined;
 	}
 
+	/** Whether a message with this Message-ID is in the Drafts folder. */
+	async draftExists(messageId: string): Promise<boolean> {
+		const drafts = findDraftsFolder(await this.listFolders());
+		if (!drafts) throw new Error("The account does not advertise a Drafts folder");
+		const { messages } = await this.search({ folder: drafts.path, messageId, limit: 1 });
+		return messages.length > 0;
+	}
+
 	async saveSent(
 		source: Uint8Array,
 		messageId: string | undefined,

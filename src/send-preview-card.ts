@@ -153,6 +153,8 @@ export const SEND_PREVIEW_HTML = /* html */ `<!doctype html>
 			else if (result.state === "sending_started") showFinal("Sending startet, ikke funnet i Sendt");
 			else if (result.state === "cancelled") showFinal("Avbrutt, ikke sendt");
 			else if (result.state === "expired") showFinal("Utløpt, ikke sendt");
+			else if (result.state === "replaced") showFinal("Erstattet av nyere utkast");
+			else if (result.state === "deleted") showFinal("Slettet");
 			else if (result.state === "active") {
 				$("final").hidden = true;
 				$("actions").hidden = false;

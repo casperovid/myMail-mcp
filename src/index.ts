@@ -21,6 +21,7 @@ import {
 import { MCP_APP_MIME_TYPE, SEND_PREVIEW_HTML, SEND_PREVIEW_URI } from "./send-preview-card";
 import { ATTACHMENT_PREVIEW_HTML, ATTACHMENT_PREVIEW_URI } from "./attachment-card";
 import { previewImage } from "./attachment-image";
+import { nextVersion, recordReplacement } from "./draft-chain";
 import { approvalState, cancelApproval, consumeApproval, putApproval } from "./send-approval";
 import { createStatusToken, decideSendState, openStatusToken } from "./send-status";
 
@@ -1315,7 +1316,18 @@ export class MyMCP extends McpAgent<MailEnv> {
 				annotations: titled("Edit Email Draft", remoteUpdate),
 			},
 			(toolName) => async (input: any) =>
-				observeTool(toolName, async () => text(await mail.editDraft(input))),
+				observeTool(toolName, async () => {
+					const { previousMessageId, ...result } = await mail.editDraft(input);
+					// Let send cards that point at the old draft find the new one.
+					if (previousMessageId)
+						await recordReplacement(
+							env.EMAIL_KV,
+							result.accountId,
+							previousMessageId,
+							result.messageId,
+						);
+					return text(result);
+				}),
 		);
 
 		registerTools(
@@ -1692,7 +1704,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			"email_get_send_status",
 			{
 				description:
-					"App-only: called by the email_preview_send card when it is shown, never by the model. Reports whether the previewed draft has been sent (a copy with the same Message-ID is in the Sent folder, and when), is still waiting for approval, or was cancelled, expired, or started sending without a copy in Sent. Side effects: none; read-only and does not use up the approval token.",
+					"App-only: called by the email_preview_send card when it is shown, never by the model. Reports whether the previewed draft has been sent (a copy with the same Message-ID, or that of a later version made by email_update_message_draft, is in the Sent folder, and when), is still waiting for approval, was replaced by a newer unsent draft, was deleted from Drafts without being sent, or was cancelled, expired, or started sending without a copy in Sent. Side effects: none; read-only and does not use up the approval token.",
 				inputSchema: {
 					statusToken: z
 						.string()
@@ -1704,7 +1716,15 @@ export class MyMCP extends McpAgent<MailEnv> {
 						.describe("The card's approval token; only inspected, never used."),
 				},
 				outputSchema: {
-					state: z.enum(["sent", "sending_started", "active", "cancelled", "expired"]),
+					state: z.enum([
+						"sent",
+						"sending_started",
+						"active",
+						"cancelled",
+						"expired",
+						"replaced",
+						"deleted",
+					]),
 					sentAt: z.string().optional(),
 				},
 				annotations: titled("Check Email Send Status", remoteRead),
@@ -1714,11 +1734,13 @@ export class MyMCP extends McpAgent<MailEnv> {
 				observeTool("email_get_send_status", async () => {
 					const ref = await openStatusToken(env.CREDENTIAL_ENCRYPTION_KEY, statusToken);
 					if (!ref) throw new Error("The status reference is invalid or expired.");
-					const copy = await mail.findSentCopy(ref.accountId, ref.messageId);
+					const chain = await mail.draftChainStatus(ref.accountId, ref.messageId, (id) =>
+						nextVersion(env.EMAIL_KV, ref.accountId, id),
+					);
 					const approval = await approvalState(env.EMAIL_KV, previewToken);
 					return text({
-						state: decideSendState(approval, copy !== undefined),
-						sentAt: copy?.date,
+						state: decideSendState(approval, chain.sent !== undefined, chain),
+						sentAt: chain.sent?.date,
 					});
 				}),
 		);

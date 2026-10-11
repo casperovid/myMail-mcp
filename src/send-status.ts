@@ -2,7 +2,14 @@ import { openJson, sealJson } from "./crypto.ts";
 import type { ApprovalState } from "./send-approval.ts";
 
 /** What the send card shows. */
-export type SendState = "sent" | "sending_started" | "active" | "cancelled" | "expired";
+export type SendState =
+	| "sent"
+	| "sending_started"
+	| "active"
+	| "cancelled"
+	| "expired"
+	| "replaced"
+	| "deleted";
 
 const STATUS_TTL_SECONDS = 90 * 24 * 60 * 60;
 const now = () => Math.floor(Date.now() / 1000);
@@ -41,11 +48,20 @@ export async function openStatusToken(key: string, token: string): Promise<Statu
 }
 
 /**
- * A copy in the Sent folder always means sent. Without one, the approval marker decides:
- * "sent" in the marker but no copy means sending started but the copy was not found.
+ * A copy in the Sent folder (of this draft or its latest version) always means sent. Without
+ * one, the approval marker decides whether sending started or was cancelled. Then a newer,
+ * unsent version means "replaced"; a draft missing from Drafts means "deleted". Only when the
+ * draft still exists does the approval token decide between active and expired.
  */
-export function decideSendState(approval: ApprovalState, sentCopyFound: boolean): SendState {
+export function decideSendState(
+	approval: ApprovalState,
+	sentCopyFound: boolean,
+	chain: { replaced?: boolean; draftExists?: boolean } = {},
+): SendState {
 	if (sentCopyFound) return "sent";
 	if (approval === "sent") return "sending_started";
+	if (approval === "cancelled") return "cancelled";
+	if (chain.replaced) return "replaced";
+	if (chain.draftExists === false) return "deleted";
 	return approval;
 }

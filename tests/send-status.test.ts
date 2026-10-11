@@ -6,6 +6,7 @@ import {
 	consumeApproval,
 	putApproval,
 } from "../src/send-approval.ts";
+import { nextVersion, recordReplacement, walkChain } from "../src/draft-chain.ts";
 import { createStatusToken, decideSendState, openStatusToken } from "../src/send-status.ts";
 
 function fakeKv() {
@@ -56,6 +57,45 @@ assert.equal(decideSendState("sent", false), "sending_started");
 assert.equal(decideSendState("active", false), "active");
 assert.equal(decideSendState("cancelled", false), "cancelled");
 assert.equal(decideSendState("expired", false), "expired");
+
+// Replaced / deleted drafts never show as active.
+assert.equal(decideSendState("active", false, { replaced: true }), "replaced");
+assert.equal(decideSendState("expired", false, { replaced: true }), "replaced");
+assert.equal(decideSendState("active", false, { draftExists: false }), "deleted");
+assert.equal(decideSendState("expired", false, { draftExists: false }), "deleted");
+assert.equal(decideSendState("active", false, { draftExists: true }), "active");
+assert.equal(decideSendState("active", true, { replaced: true, draftExists: false }), "sent");
+assert.equal(decideSendState("cancelled", false, { replaced: true }), "cancelled");
+
+// Replacement chain: A -> B -> C. Sent copy of the latest wins; otherwise "replaced".
+{
+	const links = new Map<string, string>();
+	const chainKv = {
+		get: async (k: string) => links.get(k) ?? null,
+		put: async (k: string, v: string) => void links.set(k, v),
+	} as any;
+	await recordReplacement(chainKv, "acc", "<a>", "<b>");
+	await recordReplacement(chainKv, "acc", "<b>", "<c>");
+	await recordReplacement(chainKv, "acc", "<c>", "<c>"); // no self link
+	assert.equal(await nextVersion(chainKv, "acc", "<a>"), "<b>");
+	assert.equal(await nextVersion(chainKv, "other", "<a>"), undefined);
+	const next = (id: string) => nextVersion(chainKv, "acc", id);
+	const sentIds = new Set<string>();
+	const sentCopy = async (id: string) => (sentIds.has(id) ? { date: "d" } : undefined);
+	let result = await walkChain("<a>", { next, sentCopy });
+	assert.deepEqual(result, { last: "<c>", replaced: true });
+	sentIds.add("<c>");
+	result = await walkChain("<a>", { next, sentCopy });
+	assert.deepEqual(result, { last: "<c>", replaced: true, sent: { date: "d" } });
+	assert.deepEqual(await walkChain("<c>", { next, sentCopy }), {
+		last: "<c>",
+		replaced: false,
+		sent: { date: "d" },
+	});
+	await recordReplacement(chainKv, "acc", "<c>", "<a>"); // a loop must end
+	sentIds.clear();
+	assert.equal((await walkChain("<a>", { next, sentCopy })).replaced, true);
+}
 
 // Status token: round trip, tampering, wrong type, expiry, wrong key.
 const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
