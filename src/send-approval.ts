@@ -4,8 +4,11 @@
  * They used to live in the MCP session's Durable Object storage, which is private to one
  * session. The card's Send call can arrive on a different MCP session than the model's preview
  * call, and then the token was not found. KV is shared by all sessions.
+ *
+ * Approvals do not expire on time. A token is bound to a hash of the draft content and is
+ * single-use: it is deleted when consumed or cancelled, and sending is refused if the draft
+ * changed.
  */
-export const APPROVAL_TTL_MS = 15 * 60 * 1000;
 const PREFIX = "send-preview:";
 const DONE_PREFIX = "send-done:";
 /** How long the outcome marker is kept, so a card opened later still knows what happened. */
@@ -16,7 +19,6 @@ export interface ApprovalRecord {
 	folder: string;
 	uid: number;
 	contentHash: string;
-	expiresAt: number;
 }
 
 type ApprovalStore = Pick<KVNamespace, "get" | "put" | "delete">;
@@ -24,23 +26,13 @@ type ApprovalStore = Pick<KVNamespace, "get" | "put" | "delete">;
 export async function putApproval(
 	kv: ApprovalStore,
 	token: string,
-	record: Omit<ApprovalRecord, "expiresAt">,
-	now = Date.now(),
-): Promise<ApprovalRecord> {
-	const stored: ApprovalRecord = { ...record, expiresAt: now + APPROVAL_TTL_MS };
-	// KV's minimum TTL is 60 seconds; expiresAt is still checked on use.
-	await kv.put(PREFIX + token, JSON.stringify(stored), {
-		expirationTtl: Math.ceil(APPROVAL_TTL_MS / 1000),
-	});
-	return stored;
+	record: ApprovalRecord,
+): Promise<void> {
+	await kv.put(PREFIX + token, JSON.stringify(record));
 }
 
 /** Returns the record and removes it first, so a token can never be replayed, even if sending fails. */
-export async function consumeApproval(
-	kv: ApprovalStore,
-	token: string,
-	now = Date.now(),
-): Promise<ApprovalRecord> {
+export async function consumeApproval(kv: ApprovalStore, token: string): Promise<ApprovalRecord> {
 	const raw = await kv.get(PREFIX + token);
 	await kv.delete(PREFIX + token);
 	let record: ApprovalRecord | undefined;
@@ -49,9 +41,9 @@ export async function consumeApproval(
 	} catch {
 		record = undefined;
 	}
-	if (!record || typeof record.expiresAt !== "number" || record.expiresAt < now)
+	if (!record || typeof record.contentHash !== "string")
 		throw new Error(
-			"The send approval token is invalid, already used, cancelled, or expired. Create a new preview with email_preview_send.",
+			"The send approval token is invalid, already used, or cancelled. Create a new preview with email_preview_send.",
 		);
 	// Marker: sending was started with this token (it may still have failed afterwards).
 	await kv.put(DONE_PREFIX + token, "sent", { expirationTtl: MARKER_TTL_SECONDS });
@@ -68,19 +60,14 @@ export async function cancelApproval(kv: ApprovalStore, token: string): Promise<
 
 export type ApprovalState = "active" | "sent" | "cancelled" | "expired";
 
-/** What happened to an approval token, without using it up. */
-export async function approvalState(
-	kv: ApprovalStore,
-	token: string,
-	now = Date.now(),
-): Promise<ApprovalState> {
+/** What happened to an approval token, without using it up. "expired" means no open token exists. */
+export async function approvalState(kv: ApprovalStore, token: string): Promise<ApprovalState> {
 	const marker = await kv.get(DONE_PREFIX + token);
 	if (marker === "sent" || marker === "cancelled") return marker;
 	const raw = await kv.get(PREFIX + token);
 	if (!raw) return "expired";
 	try {
-		const record = JSON.parse(raw) as ApprovalRecord;
-		return typeof record.expiresAt === "number" && record.expiresAt >= now
+		return typeof (JSON.parse(raw) as ApprovalRecord).contentHash === "string"
 			? "active"
 			: "expired";
 	} catch {

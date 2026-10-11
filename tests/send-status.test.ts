@@ -29,30 +29,24 @@ const token = "t".repeat(43);
 // Approval states: active -> sent (marker) / cancelled (marker) / expired.
 let kv = fakeKv();
 assert.equal(await approvalState(kv, token, 1_000), "expired"); // unknown token
-await putApproval(kv, token, record, 1_000);
-assert.equal(await approvalState(kv, token, 2_000), "active");
-assert.equal(await approvalState(kv, token, 1_000 + 15 * 60 * 1000 + 1), "expired");
-await consumeApproval(kv, token, 2_000);
-assert.equal(await approvalState(kv, token, 3_000), "sent");
+await putApproval(kv, token, record);
+assert.equal(await approvalState(kv, token), "active");
+assert.equal(await approvalState(kv, token), "active"); // no time expiry
+await consumeApproval(kv, token);
+assert.equal(await approvalState(kv, token), "sent");
 await cancelApproval(kv, token); // must not overwrite "sent"
-assert.equal(await approvalState(kv, token, 3_000), "sent");
+assert.equal(await approvalState(kv, token), "sent");
 
 kv = fakeKv();
-await putApproval(kv, token, record, 1_000);
+await putApproval(kv, token, record);
 await cancelApproval(kv, token);
-assert.equal(await approvalState(kv, token, 2_000), "cancelled");
-await assert.rejects(consumeApproval(kv, token, 2_000), /invalid/);
-assert.equal(await approvalState(kv, token, 2_000), "cancelled"); // a failed use leaves the marker
+assert.equal(await approvalState(kv, token), "cancelled");
+await assert.rejects(consumeApproval(kv, token), /invalid/);
+assert.equal(await approvalState(kv, token), "cancelled"); // a failed use leaves the marker
 
 kv = fakeKv();
 await cancelApproval(kv, "u".repeat(43)); // cancelling an unknown token marks nothing
-assert.equal(await approvalState(kv, "u".repeat(43), 1), "expired");
-
-// An expired record that is used is refused and gets no "sent" marker.
-kv = fakeKv();
-await putApproval(kv, token, record, 1_000);
-await assert.rejects(consumeApproval(kv, token, 1_000 + 15 * 60 * 1000 + 1), /expired/);
-assert.equal(await approvalState(kv, token, 1_000 + 15 * 60 * 1000 + 1), "expired");
+assert.equal(await approvalState(kv, "u".repeat(43)), "expired");
 
 // Decision: a Sent copy always wins; otherwise the marker decides.
 assert.equal(decideSendState("active", true), "sent");

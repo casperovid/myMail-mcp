@@ -1416,7 +1416,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			"email_preview_send",
 			{
 				description:
-					"Show an approval card for sending an existing draft: displays From, To, Cc, Subject, the full plain text body, and the HTML body in a sandbox, with Send and Cancel buttons the user presses themselves. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, or email_update_message_draft. Side effects: none on the mailbox; it only creates a short-lived one-time approval token (15 minutes) bound to a hash of the draft content. Nothing is sent until the user presses Send on the card; if the draft changes afterwards, sending is refused. Prefer this over email_send_draft when the user wants to review the whole email. Do not call any send tool yourself after this; tell the user to review the card.",
+					"Show an approval card for sending an existing draft: displays From, To, Cc, Subject, the full plain text body, and the HTML body in a sandbox, with Send and Cancel buttons the user presses themselves. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, or email_update_message_draft. Side effects: none on the mailbox; it only creates a one-time approval token bound to a hash of the draft content. The token does not expire on time; it stops working once the draft is sent or cancelled, or if the draft content changes. Nothing is sent until the user presses Send on the card; if the draft changes afterwards, sending is refused. Prefer this over email_send_draft when the user wants to review the whole email. Do not call any send tool yourself after this; tell the user to review the card.",
 				inputSchema: {
 					...accountSelector,
 					folder: z
@@ -1451,7 +1451,6 @@ export class MyMCP extends McpAgent<MailEnv> {
 							size: z.number(),
 						}),
 					),
-					expiresAt: z.string(),
 					statusToken: z
 						.string()
 						.optional()
@@ -1471,7 +1470,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 						uid,
 					);
 					const token = randomToken();
-					const { expiresAt } = await putApproval(env.EMAIL_KV, token, {
+					await putApproval(env.EMAIL_KV, token, {
 						accountId: shown.accountId,
 						folder,
 						uid,
@@ -1487,7 +1486,6 @@ export class MyMCP extends McpAgent<MailEnv> {
 						...shown,
 						statusToken,
 						hasHtml: html !== undefined,
-						expiresAt: new Date(expiresAt).toISOString(),
 						sent: false as const,
 					};
 					return {
@@ -1715,7 +1713,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			"email_send_previewed_draft",
 			{
 				description:
-					"App-only: called by the Send button on the email_preview_send card, never by the model. Sends the previewed draft using SMTP with a one-time approval token. Side effects: sends the message, appends a copy to the IMAP Sent folder when possible, and deletes the draft; refuses and sends nothing if the token is invalid, used, or expired, or the draft content changed since the preview.",
+					"App-only: called by the Send button on the email_preview_send card, never by the model. Sends the previewed draft using SMTP with a one-time approval token. Side effects: sends the message, appends a copy to the IMAP Sent folder when possible, and deletes the draft; refuses and sends nothing if the token is invalid or already used, or the draft content changed since the preview.",
 				inputSchema: {
 					previewToken: z
 						.string()
