@@ -65,7 +65,9 @@ export function escapeHtml(value: string): string {
 }
 
 export function textToHtml(text: string): string {
-	return escapeHtml(text.replace(/\r\n?/g, "\n")).replace(/\n/g, "<br>");
+	return escapeHtml(text.replace(/\r\n?/g, "\n"))
+		.replace(/^ +| {2,}/gm, (spaces) => "&nbsp;".repeat(spaces.length))
+		.replace(/\n/g, "<br>");
 }
 
 /** Minimal HTML to plain text: <br> and block ends become line breaks, tags are dropped. */

@@ -551,11 +551,10 @@ export class MailService {
 			} else if (input.html !== undefined) {
 				html = wrapHtmlBody(appendHtmlSignature(input.html));
 			} else if (input.text !== undefined) {
-				if (existingHtml === undefined) {
-					const signed = signedBody(input.text, undefined);
-					text = signed.text;
-					html = wrapHtmlBody(signed.html);
-				} else text = appendTextSignature(input.text);
+				// Only text given: the HTML body is generated from it and replaces any old one.
+				const signed = signedBody(input.text, undefined);
+				text = signed.text;
+				html = wrapHtmlBody(signed.html);
 			}
 			const draft = buildDraftMessage(`${account.name} <${account.email}>`, {
 				to: input.to ?? addressList(parsed.to),

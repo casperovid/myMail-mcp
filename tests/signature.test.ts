@@ -77,3 +77,11 @@ assert.equal(appendHtmlSignature(wrapped), wrapped);
 assert.equal(signedBody(undefined, wrapped).html, once.html);
 const unsignedWrapped = wrapHtmlBody("Hei");
 assert.equal(wrapHtmlBody(appendHtmlSignature(unsignedWrapped)), wrapped);
+
+// Text-only HTML: line breaks, blank lines and the signature gap match plain text.
+{
+	const { text, html } = signedBody("Hei\nher er linje to\n\nNytt avsnitt", undefined);
+	assert.match(html, /^Hei<br>her er linje to<br><br>Nytt avsnitt<br><br>- - -/);
+	assert.match(text, /Nytt avsnitt\n\n- - -/);
+	assert.equal(textToHtml("  inn\nA  B"), "&nbsp;&nbsp;inn<br>A&nbsp;&nbsp;B");
+}

@@ -1104,7 +1104,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			["email_create_message_draft"],
 			{
 				description:
-					"Compose, create, or prepare a new email draft or reply draft without sending it. For a reply, provide replyToMessage with the original folder and IMAP UID; for a new message, provide to, subject, and text or HTML. Side effect: creates a draft in the IMAP Drafts folder and returns draft folder, IMAP UID, and Message-ID. The draft is always saved with both a plain text and an HTML version, and the user's signature is added automatically after the body (before any quoted original) exactly once, so do not write a signature yourself. Do not use to send; use email_send_draft after reviewing or updating the draft.",
+					"Compose, create, or prepare a new email draft or reply draft without sending it. For a reply, provide replyToMessage with the original folder and IMAP UID; for a new message, provide to, subject, and text or HTML. Side effect: creates a draft in the IMAP Drafts folder and returns draft folder, IMAP UID, and Message-ID. Give only `text` (plain text, with line breaks and blank lines between paragraphs) and do not give `html`: the server generates the HTML version from it (line breaks become <br>, blank lines become paragraph spacing, same font as the user's other mail), so the draft is always saved with both a plain text and an HTML version. The user's signature is added automatically after the body (before any quoted original) exactly once, so do not write a signature yourself. Do not use to send; use email_send_draft after reviewing or updating the draft.",
 				inputSchema: {
 					...accountSelector,
 					to: recipientSchema
@@ -1129,8 +1129,18 @@ export class MyMCP extends McpAgent<MailEnv> {
 						.describe(
 							"Required for a new message; defaults to Re: original subject for a reply draft.",
 						),
-					text: z.string().optional().describe("Plain text body for the draft."),
-					html: z.string().optional().describe("HTML body for the draft."),
+					text: z
+						.string()
+						.optional()
+						.describe(
+							"Plain text body for the draft. Normally the only body field to give: the HTML version is generated from it.",
+						),
+					html: z
+						.string()
+						.optional()
+						.describe(
+							"Do not give this normally. Only for deliberate custom HTML; when omitted the HTML body is generated from text.",
+						),
 					replyToMessage: z
 						.object({
 							folder: z
@@ -1249,7 +1259,7 @@ export class MyMCP extends McpAgent<MailEnv> {
 			["email_update_message_draft"],
 			{
 				description:
-					"Edit, update, or replace an existing IMAP draft without sending it. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, email_update_message_draft, or search results for drafts. Side effect: replaces the draft and returns a new draft folder and IMAP UID. The user's signature is added automatically to a text or html you supply unless it already contains it; parts you do not supply are kept unchanged. Do not use for non-draft messages or to send; use email_send_draft to send.",
+					"Edit, update, or replace an existing IMAP draft without sending it. Requires draft folder and draft IMAP UID returned by email_create_message_draft, email_create_forward_draft, email_update_message_draft, or search results for drafts. Side effect: replaces the draft and returns a new draft folder and IMAP UID. To change the body, give only `text` and not `html`: the HTML version is regenerated from the text (line breaks become <br>, blank lines become paragraph spacing) and replaces any old HTML body, so the two versions never disagree. The user's signature is added automatically unless the supplied body already contains it. If you give neither text nor html the existing body is kept unchanged; recipients, subject and attachments you do not supply are also kept. Do not use for non-draft messages or to send; use email_send_draft to send.",
 				inputSchema: {
 					...accountSelector,
 					folder: z
@@ -1281,11 +1291,15 @@ export class MyMCP extends McpAgent<MailEnv> {
 					text: z
 						.string()
 						.optional()
-						.describe("Optional replacement plain text body for the draft."),
+						.describe(
+							"Replacement plain text body. Give only this to change the body; the HTML version is regenerated from it and the old HTML is replaced.",
+						),
 					html: z
 						.string()
 						.optional()
-						.describe("Optional replacement HTML body for the draft."),
+						.describe(
+							"Do not give this normally. Only for deliberate custom HTML; when omitted and text is given, HTML is generated from text.",
+						),
 					attachments: z
 						.array(attachmentSchema)
 						.max(20)

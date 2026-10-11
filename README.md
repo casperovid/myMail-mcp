@@ -583,8 +583,8 @@ Drafts created or edited by `email_create_message_draft`, `email_create_forward_
 `email_update_message_draft` get the signature defined in `src/mail/signature.ts` (plain text and HTML, bold name
 and links), after exactly one blank line below the body and before any quoted or forwarded original. New drafts
 are always saved as `multipart/alternative`; if only `text` or only `html` is given, the other version is derived.
-The signature is added once: it is skipped when the supplied text or HTML already contains it, and
-`email_update_message_draft` only touches the parts it is given. Sending, including from the approval card,
+When only `text` is given (the intended use), the HTML body is generated from it, in the same font as before: line breaks become `<br>`, blank lines stay blank lines, so the gap before the signature is the same single blank line as in plain text. In `email_update_message_draft` this also replaces any old HTML body instead of keeping it. The signature is added once: it is skipped when the supplied text or HTML already contains it, and
+`email_update_message_draft` leaves the body unchanged when neither `text` nor `html` is given. Sending, including from the approval card,
 sends the stored draft unchanged. `email_send_draft` ignores the signature when comparing `text`, and the
 approval card shows the HTML version (with the signature) by default.
 
